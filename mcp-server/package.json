@@ -1,16 +1,43 @@
 {
   "name": "bulk-seo-meta-editor-mcp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "MCP server for Bulk SEO Meta Editor for AI Agents — lets Claude Code / Claude Desktop bulk-update Yoast or Rank Math SEO meta tags on WordPress sites.",
   "type": "module",
   "bin": {
-    "bulk-seo-meta-editor-mcp": "./index.js"
+    "bulk-seo-meta-editor-mcp": "index.js"
   },
   "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
   "scripts": {
     "start": "node index.js"
   },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "wordpress",
+    "yoast",
+    "rank-math",
+    "seo",
+    "claude",
+    "claude-code",
+    "ai-agent",
+    "meta-tags",
+    "bulk-update"
+  ],
+  "author": "Mojo Dojo <analytics@mojodojo.io> (https://mojodojo.io)",
   "license": "GPL-2.0-or-later",
+  "homepage": "https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents.git",
+    "directory": "mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/issues"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.23.0"
