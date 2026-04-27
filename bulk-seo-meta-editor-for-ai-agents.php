@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
- * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.2.6
+ * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, and taxonomy term archives (categories, tags, custom taxonomies). Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
+ * Version: 1.3.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -21,7 +21,7 @@ if (!defined('SEO_META_BRIDGE_VERSION')) {
         define('SEO_META_BRIDGE_VERSION', $sm_bridge_hdr['Version'] ?: '0.0.0');
         unset($sm_bridge_hdr);
     } else {
-        define('SEO_META_BRIDGE_VERSION', '1.2.5');
+        define('SEO_META_BRIDGE_VERSION', '1.3.0');
     }
 }
 
@@ -230,6 +230,147 @@ if (!function_exists('seo_meta_bridge_csv_line')) {
     }
 }
 
+if (!function_exists('seo_meta_bridge_active_term_keys')) {
+    /**
+     * Term-meta alias map for the active SEO plugin. Yoast term keys differ
+     * from postmeta keys (no "_yoast_wpseo_" prefix — they live in the
+     * wpseo_taxonomy_meta option); Rank Math reuses the same key names as
+     * postmeta but stores them in wp_termmeta.
+     */
+    function seo_meta_bridge_active_term_keys() {
+        $yoast    = defined('WPSEO_VERSION')    || class_exists('WPSEO_Options');
+        $rankmath = defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper');
+
+        $yoast_keys = [
+            'title'        => 'wpseo_title',
+            'description'  => 'wpseo_desc',
+            'focus_kw'     => 'wpseo_focuskw',
+            'canonical'    => 'wpseo_canonical',
+            'noindex'      => 'wpseo_noindex',
+            'og_title'     => 'wpseo_opengraph-title',
+            'og_desc'      => 'wpseo_opengraph-description',
+            'og_image'     => 'wpseo_opengraph-image',
+            'tw_title'     => 'wpseo_twitter-title',
+            'tw_desc'      => 'wpseo_twitter-description',
+            'tw_image'     => 'wpseo_twitter-image',
+        ];
+
+        $rankmath_keys = [
+            'title'        => 'rank_math_title',
+            'description'  => 'rank_math_description',
+            'focus_kw'     => 'rank_math_focus_keyword',
+            'canonical'    => 'rank_math_canonical_url',
+            'robots'       => 'rank_math_robots',
+            'og_title'     => 'rank_math_facebook_title',
+            'og_desc'      => 'rank_math_facebook_description',
+            'og_image'     => 'rank_math_facebook_image',
+            'tw_title'     => 'rank_math_twitter_title',
+            'tw_desc'      => 'rank_math_twitter_description',
+            'tw_image'     => 'rank_math_twitter_image',
+        ];
+
+        if ($yoast)    return ['plugin' => 'yoast',    'keys' => $yoast_keys];
+        if ($rankmath) return ['plugin' => 'rankmath', 'keys' => $rankmath_keys];
+        return ['plugin' => null, 'keys' => []];
+    }
+}
+
+if (!function_exists('seo_meta_bridge_term_get_value')) {
+    /**
+     * Read one term-meta value, abstracting Yoast (option-array) vs Rank Math
+     * (wp_termmeta) storage.
+     */
+    function seo_meta_bridge_term_get_value($term_id, $taxonomy, $meta_key, $plugin) {
+        if ($plugin === 'rankmath') {
+            return get_term_meta($term_id, $meta_key, true);
+        }
+        if ($plugin === 'yoast') {
+            $opt = get_option('wpseo_taxonomy_meta', []);
+            if (isset($opt[$taxonomy][$term_id][$meta_key])) {
+                return $opt[$taxonomy][$term_id][$meta_key];
+            }
+            return '';
+        }
+        return '';
+    }
+}
+
+if (!function_exists('seo_meta_bridge_term_set_value')) {
+    /**
+     * Write one term-meta value. Yoast stores all term SEO inside a single
+     * wpseo_taxonomy_meta option (NOT in wp_termmeta), so we read-modify-write
+     * the option once per call.
+     */
+    function seo_meta_bridge_term_set_value($term_id, $taxonomy, $meta_key, $value, $plugin) {
+        if ($plugin === 'rankmath') {
+            update_term_meta($term_id, $meta_key, $value);
+            return true;
+        }
+        if ($plugin === 'yoast') {
+            $opt = get_option('wpseo_taxonomy_meta', []);
+            if (!isset($opt[$taxonomy]) || !is_array($opt[$taxonomy])) {
+                $opt[$taxonomy] = [];
+            }
+            if (!isset($opt[$taxonomy][$term_id]) || !is_array($opt[$taxonomy][$term_id])) {
+                $opt[$taxonomy][$term_id] = [];
+            }
+            $opt[$taxonomy][$term_id][$meta_key] = $value;
+            update_option('wpseo_taxonomy_meta', $opt);
+            return true;
+        }
+        return false;
+    }
+}
+
+if (!function_exists('seo_meta_bridge_apply_term_update')) {
+    /**
+     * Apply a meta update to one term. Mirrors seo_meta_bridge_apply_update()
+     * but for taxonomy terms. Permission is enforced via the taxonomy's
+     * edit_terms cap.
+     */
+    function seo_meta_bridge_apply_term_update($term_id, $taxonomy, $meta) {
+        $term = get_term((int) $term_id, $taxonomy);
+        if (!$term || is_wp_error($term)) {
+            return ['ok' => false, 'errors' => ['term_not_found']];
+        }
+        $tax_obj = get_taxonomy($taxonomy);
+        if (!$tax_obj) {
+            return ['ok' => false, 'errors' => ['unknown_taxonomy']];
+        }
+        if (!current_user_can($tax_obj->cap->edit_terms)) {
+            return ['ok' => false, 'errors' => ['forbidden']];
+        }
+        $active = seo_meta_bridge_active_term_keys();
+        if (!$active['plugin']) {
+            return ['ok' => false, 'errors' => ['no_seo_plugin']];
+        }
+        $alias_to_meta = $active['keys'];
+        $allowed       = array_values($alias_to_meta);
+        $url_keys      = [
+            'wpseo_canonical', 'wpseo_opengraph-image', 'wpseo_twitter-image',
+            'rank_math_canonical_url', 'rank_math_facebook_image', 'rank_math_twitter_image',
+        ];
+
+        $errors = [];
+        foreach ($meta as $key => $value) {
+            if (isset($alias_to_meta[$key])) {
+                $key = $alias_to_meta[$key];
+            }
+            if (!in_array($key, $allowed, true)) {
+                $errors[] = "unknown_or_disallowed_key:$key";
+                continue;
+            }
+            if (in_array($key, $url_keys, true)) {
+                $value = esc_url_raw($value);
+            } elseif (is_string($value)) {
+                $value = sanitize_text_field($value);
+            }
+            seo_meta_bridge_term_set_value($term_id, $taxonomy, $key, $value, $active['plugin']);
+        }
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+}
+
 if (!function_exists('seo_meta_bridge_apply_update')) {
     /**
      * Apply a meta update to one post. Returns ['ok' => bool, 'errors' => [...]].
@@ -285,13 +426,16 @@ add_action('rest_api_init', function () {
         'methods'             => 'GET',
         'permission_callback' => $perm,
         'callback'            => function () {
-            $active = seo_meta_bridge_active_keys();
+            $active      = seo_meta_bridge_active_keys();
+            $term_active = seo_meta_bridge_active_term_keys();
             return [
-                'yoast'    => defined('WPSEO_VERSION')    || class_exists('WPSEO_Options'),
-                'rankmath' => defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper'),
-                'active'   => $active['plugin'],
-                'fields'   => $active['keys'],
-                'version'  => SEO_META_BRIDGE_VERSION,
+                'yoast'          => defined('WPSEO_VERSION')    || class_exists('WPSEO_Options'),
+                'rankmath'       => defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper'),
+                'active'         => $active['plugin'],
+                'fields'         => $active['keys'],
+                'term_fields'    => $term_active['keys'],
+                'supports_terms' => !empty($term_active['plugin']),
+                'version'        => SEO_META_BRIDGE_VERSION,
             ];
         },
     ]);
@@ -313,16 +457,34 @@ add_action('rest_api_init', function () {
             foreach ($items as $item) {
                 $id   = isset($item['id']) ? (int) $item['id'] : 0;
                 $meta = isset($item['meta']) && is_array($item['meta']) ? $item['meta'] : [];
+                $kind = isset($item['kind']) && $item['kind'] === 'term' ? 'term' : 'post';
                 if (!$id || !$meta) {
-                    $results[] = ['id' => $id, 'status' => 'error', 'errors' => ['missing_id_or_meta']];
+                    $results[] = ['id' => $id, 'kind' => $kind, 'status' => 'error', 'errors' => ['missing_id_or_meta']];
                     continue;
                 }
-                $r = seo_meta_bridge_apply_update($id, $meta);
-                $results[] = [
-                    'id'     => $id,
-                    'status' => $r['ok'] ? 'ok' : 'error',
-                    'errors' => $r['errors'],
-                ];
+                if ($kind === 'term') {
+                    $taxonomy = isset($item['taxonomy']) ? sanitize_key($item['taxonomy']) : '';
+                    if (!$taxonomy) {
+                        $results[] = ['id' => $id, 'kind' => 'term', 'status' => 'error', 'errors' => ['missing_taxonomy']];
+                        continue;
+                    }
+                    $r = seo_meta_bridge_apply_term_update($id, $taxonomy, $meta);
+                    $results[] = [
+                        'id'       => $id,
+                        'kind'     => 'term',
+                        'taxonomy' => $taxonomy,
+                        'status'   => $r['ok'] ? 'ok' : 'error',
+                        'errors'   => $r['errors'],
+                    ];
+                } else {
+                    $r = seo_meta_bridge_apply_update($id, $meta);
+                    $results[] = [
+                        'id'     => $id,
+                        'kind'   => 'post',
+                        'status' => $r['ok'] ? 'ok' : 'error',
+                        'errors' => $r['errors'],
+                    ];
+                }
             }
             return ['count' => count($results), 'results' => $results];
         },
@@ -330,22 +492,37 @@ add_action('rest_api_init', function () {
 
     // -------- /export --------------------------------------------------------
     // GET /export?post_type=post,page&status=publish&limit=500&offset=0
-    // Streams CSV with id,url,post_type,status,title,plus the active plugin's
-    // SEO fields as columns.
+    //           &include_terms=1&taxonomy=category,post_tag
+    // Streams CSV with id,url,post_type,status,post_title,plus the active
+    // plugin's SEO fields, plus trailing `kind` and `taxonomy` columns.
+    // Backwards compatible: v1.2.x clients that ignore the trailing columns
+    // see the same shape they had.
     register_rest_route('seo-meta-bridge/v1', '/export', [
         'methods'             => 'GET',
         'permission_callback' => $perm,
         'callback'            => function (WP_REST_Request $req) {
-            $active = seo_meta_bridge_active_keys();
-            if (!$active['plugin']) {
+            $active      = seo_meta_bridge_active_keys();
+            $term_active = seo_meta_bridge_active_term_keys();
+            if (!$active['plugin'] && !$term_active['plugin']) {
                 return new WP_Error('no_seo_plugin', 'No SEO plugin active', ['status' => 400]);
             }
 
             $post_types_param = $req->get_param('post_type') ?: 'post,page';
-            $post_types = array_map('trim', explode(',', $post_types_param));
-            $status     = $req->get_param('status') ?: 'publish,draft';
-            $limit      = min(2000, max(1, (int) ($req->get_param('limit') ?: 500)));
-            $offset     = max(0, (int) ($req->get_param('offset') ?: 0));
+            // 'any' is a magic WP_Query value meaning all public types except
+            // attachment/revision. Pass it as a string, not an array.
+            if (trim($post_types_param) === 'any') {
+                $post_types = 'any';
+            } else {
+                $post_types = array_map('trim', explode(',', $post_types_param));
+            }
+            $status           = $req->get_param('status') ?: 'publish,draft';
+            $limit            = min(2000, max(1, (int) ($req->get_param('limit') ?: 500)));
+            $offset           = max(0, (int) ($req->get_param('offset') ?: 0));
+            $include_terms    = (string) $req->get_param('include_terms') === '1';
+            $taxonomies_param = $req->get_param('taxonomy');
+            $taxonomies = $taxonomies_param
+                ? array_map('trim', explode(',', $taxonomies_param))
+                : array_values(get_taxonomies(['public' => true], 'names'));
 
             $query = new WP_Query([
                 'post_type'      => $post_types,
@@ -366,15 +543,39 @@ add_action('rest_api_init', function () {
             // 'post_title' disambiguates the WP post title from the SEO 'title'
             // alias which maps to _yoast_wpseo_title / rank_math_title.
             $headers = ['id', 'url', 'post_type', 'status', 'post_title'];
-            foreach (array_keys($active['keys']) as $alias) {
+            $field_aliases = $active['plugin'] ? array_keys($active['keys']) : array_keys($term_active['keys']);
+            foreach ($field_aliases as $alias) {
                 $headers[] = $alias;
                 if ($include_lengths && $alias === 'title')       $headers[] = 'title_chars';
                 if ($include_lengths && $alias === 'description') $headers[] = 'desc_chars';
             }
+            // Trailing kind/taxonomy columns let one CSV represent both posts
+            // and taxonomy term archives in a single export.
+            $headers[] = 'kind';
+            $headers[] = 'taxonomy';
+
+            // Pre-collect terms so the streamer doesn't need to query inside
+            // the response filter (keeps the filter side-effect-free apart
+            // from emitting bytes).
+            $term_rows = [];
+            if ($include_terms && $term_active['plugin']) {
+                foreach ($taxonomies as $tax_name) {
+                    if (!taxonomy_exists($tax_name)) continue;
+                    $terms = get_terms([
+                        'taxonomy'   => $tax_name,
+                        'hide_empty' => false,
+                        'number'     => $limit,
+                    ]);
+                    if (is_wp_error($terms)) continue;
+                    foreach ($terms as $t) {
+                        $term_rows[] = ['term' => $t, 'taxonomy' => $tax_name];
+                    }
+                }
+            }
 
             // WP_REST_Response always JSON-encodes its body, so emit raw CSV
             // bytes via rest_pre_serve_request and short-circuit serialization.
-            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $headers, $include_lengths) {
+            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $term_active, $headers, $include_lengths, $term_rows, $field_aliases) {
                 if ($served) return $served;
                 if (!headers_sent()) {
                     header('Content-Type: text/csv; charset=utf-8');
@@ -402,8 +603,31 @@ add_action('rest_api_init', function () {
                             $row[] = mb_strlen((string) $val);
                         }
                     }
+                    $row[] = 'post';  // kind
+                    $row[] = '';      // taxonomy (n/a for posts)
                     // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
                     echo seo_meta_bridge_csv_line($row);
+                }
+                if ($term_active['plugin']) {
+                    foreach ($term_rows as $tr) {
+                        $t   = $tr['term'];
+                        $tax = $tr['taxonomy'];
+                        $link = get_term_link($t);
+                        if (is_wp_error($link)) $link = '';
+                        $row = [$t->term_id, $link, '', '', $t->name];
+                        foreach ($term_active['keys'] as $alias => $meta_key) {
+                            $val = seo_meta_bridge_term_get_value($t->term_id, $tax, $meta_key, $term_active['plugin']);
+                            if (is_array($val)) $val = implode('|', $val);
+                            $row[] = $val;
+                            if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
+                                $row[] = mb_strlen((string) $val);
+                            }
+                        }
+                        $row[] = 'term';
+                        $row[] = $tax;
+                        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
+                        echo seo_meta_bridge_csv_line($row);
+                    }
                 }
                 return true;
             });
@@ -466,18 +690,21 @@ add_action('rest_api_init', function () {
                 return new WP_Error('too_many', 'max 2000 rows per import', ['status' => 400]);
             }
 
-            $active = seo_meta_bridge_active_keys();
-            $alias_to_meta = $active['keys'];
-            // Allow either alias names (title, description, focus_kw...) or raw meta keys.
-            $non_meta_cols = ['id', 'url', 'post_type', 'status', 'post_title']; // post_title = WP post title, distinct from SEO 'title' alias
+            $active      = seo_meta_bridge_active_keys();
+            $term_active = seo_meta_bridge_active_term_keys();
+            // Trailing kind/taxonomy columns (v1.3.0+) flag term rows in a
+            // mixed export. v1.2.x CSVs lack them — kind defaults to 'post'.
+            $non_meta_cols = ['id', 'url', 'post_type', 'status', 'post_title', 'kind', 'taxonomy'];
 
             $results = [];
             foreach ($rows as $row) {
-                $id = isset($row['id']) ? (int) $row['id'] : 0;
+                $id   = isset($row['id']) ? (int) $row['id'] : 0;
+                $kind = isset($row['kind']) && $row['kind'] === 'term' ? 'term' : 'post';
                 if (!$id) {
-                    $results[] = ['id' => 0, 'status' => 'error', 'errors' => ['missing_id']];
+                    $results[] = ['id' => 0, 'kind' => $kind, 'status' => 'error', 'errors' => ['missing_id']];
                     continue;
                 }
+                $alias_to_meta = $kind === 'term' ? $term_active['keys'] : $active['keys'];
                 $meta = [];
                 foreach ($row as $col => $val) {
                     if (in_array($col, $non_meta_cols, true)) continue;
@@ -493,15 +720,32 @@ add_action('rest_api_init', function () {
                     // unknown columns silently ignored — supports round-tripping export CSVs
                 }
                 if (!$meta) {
-                    $results[] = ['id' => $id, 'status' => 'noop', 'errors' => []];
+                    $results[] = ['id' => $id, 'kind' => $kind, 'status' => 'noop', 'errors' => []];
                     continue;
                 }
-                $r = seo_meta_bridge_apply_update($id, $meta);
-                $results[] = [
-                    'id'     => $id,
-                    'status' => $r['ok'] ? 'ok' : 'error',
-                    'errors' => $r['errors'],
-                ];
+                if ($kind === 'term') {
+                    $taxonomy = isset($row['taxonomy']) ? sanitize_key($row['taxonomy']) : '';
+                    if (!$taxonomy) {
+                        $results[] = ['id' => $id, 'kind' => 'term', 'status' => 'error', 'errors' => ['missing_taxonomy']];
+                        continue;
+                    }
+                    $r = seo_meta_bridge_apply_term_update($id, $taxonomy, $meta);
+                    $results[] = [
+                        'id'       => $id,
+                        'kind'     => 'term',
+                        'taxonomy' => $taxonomy,
+                        'status'   => $r['ok'] ? 'ok' : 'error',
+                        'errors'   => $r['errors'],
+                    ];
+                } else {
+                    $r = seo_meta_bridge_apply_update($id, $meta);
+                    $results[] = [
+                        'id'     => $id,
+                        'kind'   => 'post',
+                        'status' => $r['ok'] ? 'ok' : 'error',
+                        'errors' => $r['errors'],
+                    ];
+                }
             }
             return ['count' => count($results), 'results' => $results];
         },

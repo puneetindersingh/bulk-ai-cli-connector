@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
 Tested up to: 6.9
-Stable tag: 1.2.6
+Stable tag: 1.3.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -19,8 +19,9 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 = What's included =
 
 * **REST endpoints** — read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route or the namespaced helpers
-* **Bulk update** — apply changes to up to 100 posts in a single call
-* **CSV import / export** — round-trip your SEO meta through Excel or Google Sheets
+* **Taxonomy term archives** — edit SEO meta on category/tag/custom-taxonomy archive pages too, not just posts (Yoast and Rank Math both supported)
+* **Bulk update** — apply changes to up to 100 posts or terms in a single call
+* **CSV import / export** — round-trip your SEO meta through Excel or Google Sheets, posts and terms in one file
 * **MCP server** — bundled Node.js companion (`bulk-seo-meta-editor-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
 * **Auto-detection** — works with Yoast SEO or Rank Math, picks the active one automatically
 * **Per-post permission checks** — Contributors and Authors can only edit their own posts via the API, just like the wp-admin UI
@@ -88,7 +89,11 @@ Yes. The plugin is read-only until something hits the REST endpoints, and writes
 
 = Does it work with WooCommerce products? =
 
-Yes — meta is registered on every public post type, so products, custom post types, etc. are all covered.
+Yes — meta is registered on every public post type, so products, custom post types, etc. are all covered. Product category and product tag archives (and any other custom taxonomy) are also editable via the term endpoints (v1.3.0+).
+
+= Can I edit category / tag archive SEO meta in bulk? =
+
+Yes (v1.3.0+). Pass `?include_terms=1` to `/export` to pull category, tag, and any custom-taxonomy archive rows alongside posts. Post `/bulk` items with `kind: "term"` and the `taxonomy` slug to update them. Yoast term meta is stored in the `wpseo_taxonomy_meta` option; Rank Math uses standard term meta. Both are handled transparently — you pass plugin-neutral aliases (`title`, `description`, `og_title`, etc.) and the plugin writes to the right place.
 
 = Why am I getting 401 Unauthorized on localhost? =
 
@@ -99,6 +104,15 @@ WordPress disables Application Passwords on non-HTTPS sites by default. For loca
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 1.3.0 =
+* **Taxonomy term archives are now editable** — categories, tags, and any custom taxonomy archive (e.g. WooCommerce `product_cat`, `product_tag`, theme-registered taxonomies). Previously the plugin only handled posts, pages and CPTs; term archive SEO meta had to be edited in wp-admin one term at a time.
+* `/status` now reports `supports_terms: true` and a `term_fields` alias map so clients can detect the capability.
+* `/export?include_terms=1` appends term archive rows to the CSV. New trailing `kind` and `taxonomy` columns flag term rows; post rows have `kind=post` with an empty `taxonomy`. Filter to specific taxonomies with `?taxonomy=category,product_cat`. Backwards compatible — v1.2.x clients that ignore the trailing columns see the same column shape.
+* `/export?post_type=any` now correctly returns all public post types (previously needed an explicit comma list of CPTs).
+* `/bulk` accepts term updates via `{ id: <term_id>, kind: "term", taxonomy: "category", meta: {...} }`. Existing post-update payloads are unchanged.
+* `/import` reads `kind` and `taxonomy` columns from CSV uploads so a mixed posts+terms export round-trips cleanly.
+* Yoast term meta is stored in the `wpseo_taxonomy_meta` option (read-modify-write per call). Rank Math term meta uses `wp_termmeta`. Per-taxonomy `edit_terms` capability is enforced on every write.
 
 = 1.2.6 =
 * `/export` now includes `title_chars` and `desc_chars` helper columns by default — character counts for the SEO title and description so you can spot over-limit cells at a glance when editing in Excel/LibreOffice/Google Sheets. Pass `?lengths=0` to get the original column shape. `/import` ignores these columns, so exports round-trip unchanged. Counts are static at export time.
