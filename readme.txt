@@ -1,4 +1,4 @@
-=== SEO Meta Bridge for AI ===
+=== Bulk SEO Meta Editor for AI Agents ===
 Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
@@ -8,7 +8,7 @@ Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Read and update Yoast SEO or Rank Math meta via REST API. For AI agents and scripts. Bulk update, CSV import/export, MCP server.
+Bulk-update Yoast SEO or Rank Math meta tags via REST API. For AI agents and automation scripts. CSV import/export and MCP server included.
 
 == Description ==
 
@@ -21,7 +21,7 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 * **REST endpoints** — read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route or the namespaced helpers
 * **Bulk update** — apply changes to up to 100 posts in a single call
 * **CSV import / export** — round-trip your SEO meta through Excel or Google Sheets
-* **MCP server** — bundled Node.js companion (`seo-meta-bridge-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
+* **MCP server** — bundled Node.js companion (`bulk-seo-meta-editor-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
 * **Auto-detection** — works with Yoast SEO or Rank Math, picks the active one automatically
 * **Per-post permission checks** — Contributors and Authors can only edit their own posts via the API, just like the wp-admin UI
 * **Allowlist enforcement** — only meta keys belonging to the active SEO plugin are accepted; arbitrary postmeta writes are rejected
@@ -53,7 +53,7 @@ Plus robots, OG/Twitter description fields, and Rank Math primary-taxonomy keys.
 
 = MCP server (Claude / Claude Code) =
 
-A Node.js MCP server is bundled at https://github.com/puneetindersingh/seo-meta-bridge-for-ai/tree/main/mcp-server and published to npm as `seo-meta-bridge-mcp`. Add to Claude Desktop / Claude Code with one command and Claude can read, edit, bulk-update, and CSV-roundtrip SEO meta on any of your sites.
+A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/tree/main/mcp-server and published to npm as `bulk-seo-meta-editor-mcp`. Add to Claude Desktop / Claude Code with one command and Claude can read, edit, bulk-update, and CSV-roundtrip SEO meta on any of your sites.
 
 = Security =
 
@@ -65,12 +65,12 @@ A Node.js MCP server is bundled at https://github.com/puneetindersingh/seo-meta-
 
 == Installation ==
 
-1. Upload `seo-meta-bridge-for-ai.zip` via **Plugins → Add New → Upload Plugin**, or drop the PHP file into `wp-content/plugins/` via SFTP
+1. Upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**, or drop the PHP file into `wp-content/plugins/` via SFTP
 2. Activate
 3. Set up an Application Password: **Users → Your Profile → Application Passwords → Add New**
 4. Test: `curl -u 'username:app pass' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`
 
-For the optional MCP server, install via npm: `npm install -g seo-meta-bridge-mcp` and configure Claude Desktop / Claude Code with `WP_BASE_URL`, `WP_USER`, and `WP_APP_PASS` environment variables.
+For the optional MCP server, install via npm: `npm install -g bulk-seo-meta-editor-mcp` and configure Claude Desktop / Claude Code with `WP_BASE_URL`, `WP_USER`, and `WP_APP_PASS` environment variables.
 
 == Frequently Asked Questions ==
 

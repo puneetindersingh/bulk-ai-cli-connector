@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// MCP server for SEO Meta Bridge for AI.
+// MCP server for Bulk SEO Meta Editor for AI Agents.
 // Exposes the WP plugin's REST endpoints as MCP tools so Claude Code /
-// Claude Desktop can read and update SEO meta with a single tool call.
+// Claude Desktop can read and bulk-update SEO meta with a single tool call.
 //
 // Configure via env vars:
 //   WP_BASE_URL   e.g. https://example.com
@@ -168,7 +168,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'seo-meta-bridge-for-ai', version: '1.2.0' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.2.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -229,4 +229,4 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error('seo-meta-bridge-for-ai MCP server ready');
+console.error('bulk-seo-meta-editor-for-ai-agents MCP server ready');

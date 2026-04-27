@@ -1,13 +1,13 @@
 <?php
 /**
- * Plugin Name: SEO Meta Bridge for AI
- * Plugin URI:  https://github.com/puneetindersingh/seo-meta-bridge-for-ai
- * Description: Lets AI agents (Claude, GPT, Perplexity) and scripts read and update Yoast SEO or Rank Math meta fields via the WordPress REST API. Auto-detects the active SEO plugin. Includes bulk-update, CSV import/export, and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
+ * Plugin Name: Bulk SEO Meta Editor for AI Agents
+ * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
+ * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
  * Version: 1.2.1
  * Author: Mojo Dojo
  * Author URI: https://mojodojo.io
  * License: GPL-2.0-or-later
- * Text Domain: seo-meta-bridge-for-ai
+ * Text Domain: bulk-seo-meta-editor-for-ai-agents
  */
 
 if (!defined('ABSPATH')) exit;

@@ -1,6 +1,6 @@
-# SEO Meta Bridge for AI
+# Bulk SEO Meta Editor for AI Agents
 
-A WordPress plugin that lets AI agents (Claude, GPT, Perplexity) and scripts read and update **Yoast SEO** or **Rank Math** meta fields via the WordPress REST API. Auto-detects which SEO plugin is active.
+A WordPress plugin that lets AI agents (Claude, GPT, Perplexity) and scripts bulk-update **Yoast SEO** or **Rank Math** meta tags via the WordPress REST API. Auto-detects which SEO plugin is active.
 
 Includes:
 
@@ -21,18 +21,18 @@ WordPress doesn't expose Yoast or Rank Math meta fields via the REST API by defa
 
 ### Option 1 — WordPress admin (zip upload)
 
-1. Download `seo-meta-bridge-for-ai.zip` from [Releases](https://github.com/puneetindersingh/seo-meta-bridge-for-ai/releases)
+1. Download `bulk-seo-meta-editor-for-ai-agents.zip` from [Releases](https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/releases)
 2. WP admin → **Plugins → Add New → Upload Plugin**
 3. Activate
 
 ### Option 2 — must-use plugin (auto-active, recommended for agencies)
 
-Drop `seo-meta-bridge-for-ai.php` into `wp-content/mu-plugins/`. No activation required, can't be turned off from the admin.
+Drop `bulk-seo-meta-editor-for-ai-agents.php` into `wp-content/mu-plugins/`. No activation required, can't be turned off from the admin.
 
 ### Option 3 — Composer
 
 ```
-composer require mojodojo/seo-meta-bridge-for-ai
+composer require mojodojo/bulk-seo-meta-editor-for-ai-agents
 ```
 
 ## Authentication
@@ -140,9 +140,9 @@ A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
 ```json
 {
   "mcpServers": {
-    "seo-meta-bridge": {
+    "bulk-seo-meta-editor": {
       "command": "npx",
-      "args": ["-y", "seo-meta-bridge-mcp"],
+      "args": ["-y", "bulk-seo-meta-editor-mcp"],
       "env": {
         "WP_BASE_URL": "https://your-site.com",
         "WP_USER": "your-username",
@@ -156,14 +156,14 @@ A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
 ### Install (Claude Code)
 
 ```
-claude mcp add seo-meta-bridge \
+claude mcp add bulk-seo-meta-editor \
   --env WP_BASE_URL=https://your-site.com \
   --env WP_USER=your-username \
   --env WP_APP_PASS='xxxx xxxx xxxx xxxx xxxx xxxx' \
-  -- npx -y seo-meta-bridge-mcp
+  -- npx -y bulk-seo-meta-editor-mcp
 ```
 
-Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤60 chars and meta description ≤150 chars, focusing on the keyword 'industrial electric motors'."*
+Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤60 chars and meta description ≤150 chars, focusing on the page's primary keyword."*
 
 ## Field reference
 

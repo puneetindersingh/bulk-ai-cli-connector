@@ -1,10 +1,10 @@
 {
-  "name": "seo-meta-bridge-mcp",
+  "name": "bulk-seo-meta-editor-mcp",
   "version": "1.2.0",
-  "description": "MCP server for SEO Meta Bridge for AI — lets Claude Code / Claude Desktop read and update Yoast or Rank Math SEO meta on WordPress sites.",
+  "description": "MCP server for Bulk SEO Meta Editor for AI Agents — lets Claude Code / Claude Desktop bulk-update Yoast or Rank Math SEO meta tags on WordPress sites.",
   "type": "module",
   "bin": {
-    "seo-meta-bridge-mcp": "./index.js"
+    "bulk-seo-meta-editor-mcp": "./index.js"
   },
   "main": "index.js",
   "scripts": {
