@@ -12,7 +12,18 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SEO_META_BRIDGE_VERSION', '1.2.4');
+// Read version from this file's own plugin header so /status can never drift
+// from the file's `Version:` line. Falls back to a literal if get_file_data
+// isn't loaded yet (early bootstrap path).
+if (!defined('SEO_META_BRIDGE_VERSION')) {
+    if (function_exists('get_file_data')) {
+        $sm_bridge_hdr = get_file_data(__FILE__, ['Version' => 'Version'], 'plugin');
+        define('SEO_META_BRIDGE_VERSION', $sm_bridge_hdr['Version'] ?: '0.0.0');
+        unset($sm_bridge_hdr);
+    } else {
+        define('SEO_META_BRIDGE_VERSION', '1.2.5');
+    }
+}
 
 add_action('init', function () {
 
