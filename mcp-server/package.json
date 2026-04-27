@@ -1,6 +1,6 @@
 {
   "name": "bulk-seo-meta-editor-mcp",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "MCP server for Bulk SEO Meta Editor for AI Agents — lets Claude Code / Claude Desktop bulk-update Yoast or Rank Math SEO meta tags on WordPress sites.",
   "type": "module",
   "bin": {
@@ -27,7 +27,7 @@
     "meta-tags",
     "bulk-update"
   ],
-  "author": "Mojo Dojo <analytics@mojodojo.io> (https://mojodojo.io)",
+  "author": "Puneet Singh <puneetindersingh@gmail.com> (https://github.com/puneetindersingh)",
   "license": "GPL-2.0-or-later",
   "homepage": "https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents",
   "repository": {

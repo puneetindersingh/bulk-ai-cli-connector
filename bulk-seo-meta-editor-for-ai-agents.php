@@ -3,9 +3,9 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.2.1
- * Author: Mojo Dojo
- * Author URI: https://mojodojo.io
+ * Version: 1.2.2
+ * Author: Puneet Singh
+ * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
  * Text Domain: bulk-seo-meta-editor-for-ai-agents
  */

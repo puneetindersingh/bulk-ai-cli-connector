@@ -32,7 +32,7 @@ Drop `bulk-seo-meta-editor-for-ai-agents.php` into `wp-content/mu-plugins/`. No 
 ### Option 3 — Composer
 
 ```
-composer require mojodojo/bulk-seo-meta-editor-for-ai-agents
+composer require puneetindersingh/bulk-seo-meta-editor-for-ai-agents
 ```
 
 ## Authentication
@@ -195,4 +195,4 @@ GPL-2.0-or-later.
 
 ## Author
 
-[Mojo Dojo](https://mojodojo.io) — SEO agency tooling.
+[Puneet Singh](https://github.com/puneetindersingh).
