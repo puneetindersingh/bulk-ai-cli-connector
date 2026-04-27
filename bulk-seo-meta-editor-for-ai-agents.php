@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.2.4
+ * Version: 1.2.5
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -214,7 +214,8 @@ if (!function_exists('seo_meta_bridge_csv_line')) {
             }
             $out[] = $cell;
         }
-        return implode(',', $out) . "\n";
+        // RFC 4180: CRLF terminators so multi-line cells parse correctly in Excel/Sheets/LibreOffice.
+        return implode(',', $out) . "\r\n";
     }
 }
 
@@ -363,6 +364,10 @@ add_action('rest_api_init', function () {
                 // already CSV-quoted by seo_meta_bridge_csv_line(); HTML-
                 // escaping (esc_html) would corrupt the CSV format, so we
                 // suppress the OutputNotEscaped check on these emit lines.
+                // UTF-8 BOM so Excel/LibreOffice auto-detect encoding and don't
+                // mangle curly quotes / em dashes into mojibake (â€™, â€").
+                // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- 3-byte UTF-8 BOM, no user data.
+                echo "\xEF\xBB\xBF";
                 // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
                 echo seo_meta_bridge_csv_line($headers);
                 foreach ($query->posts as $p) {
@@ -404,6 +409,11 @@ add_action('rest_api_init', function () {
                 global $wp_filesystem;
                 $csv_text = $wp_filesystem->get_contents($files['csv']['tmp_name']);
                 if ($csv_text !== false) {
+                    // Strip leading UTF-8 BOM so the first header cell isn't "\xEF\xBB\xBFid"
+                    // (which would silently drop every row's id on round-trip imports).
+                    if (substr($csv_text, 0, 3) === "\xEF\xBB\xBF") {
+                        $csv_text = substr($csv_text, 3);
+                    }
                     $lines = preg_split('/\r\n|\r|\n/', $csv_text);
                     $hdr = null;
                     foreach ($lines as $line) {
