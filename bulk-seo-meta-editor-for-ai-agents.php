@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.2.2
+ * Version: 1.2.4
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -11,6 +11,8 @@
  */
 
 if (!defined('ABSPATH')) exit;
+
+define('SEO_META_BRIDGE_VERSION', '1.2.4');
 
 add_action('init', function () {
 
@@ -231,12 +233,19 @@ if (!function_exists('seo_meta_bridge_apply_update')) {
             return ['ok' => false, 'errors' => ['forbidden']];
         }
         $active = seo_meta_bridge_active_keys();
+        $alias_to_meta = $active['keys'];
         $allowed = array_values($active['keys']);
         // Also accept the dynamic Rank Math primary-taxonomy keys.
         $allowed_dynamic_prefix = $active['plugin'] === 'rankmath' ? 'rank_math_primary_' : null;
 
         $errors = [];
         foreach ($meta as $key => $value) {
+            // Accept friendly aliases (title, description, focus_kw, ...) and translate
+            // to the active plugin's raw meta key. Lets /export columns round-trip
+            // through /bulk without manual key remapping.
+            if (isset($alias_to_meta[$key])) {
+                $key = $alias_to_meta[$key];
+            }
             $is_allowed = in_array($key, $allowed, true)
                 || ($allowed_dynamic_prefix && strpos($key, $allowed_dynamic_prefix) === 0);
             if (!$is_allowed) {
@@ -270,7 +279,7 @@ add_action('rest_api_init', function () {
                 'rankmath' => defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper'),
                 'active'   => $active['plugin'],
                 'fields'   => $active['keys'],
-                'version'  => '1.2.1',
+                'version'  => SEO_META_BRIDGE_VERSION,
             ];
         },
     ]);
@@ -437,6 +446,9 @@ add_action('rest_api_init', function () {
                 $meta = [];
                 foreach ($row as $col => $val) {
                     if (in_array($col, $non_meta_cols, true)) continue;
+                    // Empty cells in a CSV mean "don't touch this field" — never overwrite
+                    // an existing value with an empty string just because the column was blank.
+                    if ($val === null || $val === '') continue;
                     if (isset($alias_to_meta[$col])) {
                         $meta[$alias_to_meta[$col]] = $val;
                     } elseif (in_array($col, $alias_to_meta, true)) {
