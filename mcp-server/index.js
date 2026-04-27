@@ -103,7 +103,7 @@ const tools = [
   },
   {
     name: 'bulk_update',
-    description: 'Update SEO meta on up to 100 posts in a single call. Each item is { id, meta }. Returns per-item status.',
+    description: 'Update SEO meta on up to 100 posts or taxonomy terms in a single call. Each item is { id, meta } for a post, or { id, kind: "term", taxonomy: "<slug>", meta } for a taxonomy term archive (category, tag, product_cat, etc.). Returns per-item status. Requires plugin v1.3.0+ for term updates.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -113,14 +113,31 @@ const tools = [
           items: {
             type: 'object',
             properties: {
-              id:   { type: 'integer' },
-              meta: { type: 'object' },
+              id:       { type: 'integer' },
+              kind:     { type: 'string', enum: ['post', 'term'], default: 'post', description: 'Defaults to post. Set to "term" to update a taxonomy term archive.' },
+              taxonomy: { type: 'string', description: 'Required when kind=term. Taxonomy slug (category, post_tag, product_cat, etc.).' },
+              meta:     { type: 'object' },
             },
             required: ['id', 'meta'],
           },
         },
       },
       required: ['items'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_terms',
+    description: 'List taxonomy terms (categories, tags, or any custom taxonomy terms) with their core fields (id, slug, name, count, link). Use this to find term IDs and the taxonomy slug before calling bulk_update with kind=term.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        taxonomy:   { type: 'string', default: 'category', description: 'Taxonomy slug — category, post_tag, product_cat, product_tag, or any custom taxonomy.' },
+        per_page:   { type: 'integer', default: 50, maximum: 100 },
+        page:       { type: 'integer', default: 1 },
+        search:     { type: 'string', description: 'Optional name/slug search.' },
+        hide_empty: { type: 'boolean', default: false, description: 'Skip terms with zero posts.' },
+      },
       additionalProperties: false,
     },
   },
@@ -141,15 +158,17 @@ const tools = [
   },
   {
     name: 'export_csv',
-    description: 'Export all posts and their SEO meta as CSV. Returns the CSV content as a string. Useful for bulk-editing in a spreadsheet. Includes title_chars and desc_chars helper columns by default; pass include_lengths=false to omit them.',
+    description: 'Export all posts (and optionally taxonomy term archives) and their SEO meta as CSV. Returns the CSV content as a string. Useful for bulk-editing in a spreadsheet. Includes title_chars and desc_chars helper columns by default; pass include_lengths=false to omit them. Set include_terms=true to append term archive rows (categories, tags, custom taxonomies) — requires plugin v1.3.0+.',
     inputSchema: {
       type: 'object',
       properties: {
-        post_type:       { type: 'string',  default: 'post,page' },
+        post_type:       { type: 'string',  default: 'post,page', description: 'Comma-separated post types, or "any" for all public types.' },
         status:          { type: 'string',  default: 'publish,draft' },
         limit:           { type: 'integer', default: 500, maximum: 2000 },
         offset:          { type: 'integer', default: 0 },
         include_lengths: { type: 'boolean', default: true, description: 'Include title_chars / desc_chars helper columns next to title/description.' },
+        include_terms:   { type: 'boolean', default: false, description: 'Append taxonomy term archive rows (categories, tags, custom taxonomies). Requires plugin v1.3.0+.' },
+        taxonomy:        { type: 'string', description: 'Optional comma-separated taxonomy slugs to include when include_terms=true (default: all public taxonomies).' },
       },
       additionalProperties: false,
     },
@@ -169,7 +188,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.2.6' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.3.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -213,8 +232,35 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (args.limit)     qs.set('limit', String(args.limit));
         if (args.offset)    qs.set('offset', String(args.offset));
         if (args.include_lengths === false) qs.set('lengths', '0');
+        if (args.include_terms === true)    qs.set('include_terms', '1');
+        if (args.taxonomy)  qs.set('taxonomy', args.taxonomy);
         const csv = await wp(`/seo-meta-bridge/v1/export?${qs.toString()}`);
         result = { csv };
+        break;
+      }
+      case 'list_terms': {
+        // Standard WP REST exposes built-in taxonomies at /wp/v2/categories,
+        // /wp/v2/tags, and custom taxonomies at /wp/v2/<rest_base>. Resolve
+        // the rest_base via /wp/v2/taxonomies/{slug} so any registered
+        // taxonomy works (product_cat, portfolio_category, etc.).
+        const taxSlug = args.taxonomy || 'category';
+        let restBase;
+        if (taxSlug === 'category')      restBase = 'categories';
+        else if (taxSlug === 'post_tag') restBase = 'tags';
+        else {
+          const taxInfo = await wp(`/wp/v2/taxonomies/${encodeURIComponent(taxSlug)}`);
+          restBase = taxInfo?.rest_base || taxSlug;
+        }
+        const qs = new URLSearchParams();
+        qs.set('per_page',   String(args.per_page ?? 50));
+        qs.set('page',       String(args.page ?? 1));
+        qs.set('hide_empty', String(args.hide_empty ?? false));
+        if (args.search) qs.set('search', args.search);
+        const terms = await wp(`/wp/v2/${restBase}?${qs.toString()}`);
+        result = (Array.isArray(terms) ? terms : []).map(t => ({
+          id: t.id, slug: t.slug, name: t.name, count: t.count, link: t.link,
+          taxonomy: t.taxonomy || taxSlug,
+        }));
         break;
       }
       case 'import_csv':
