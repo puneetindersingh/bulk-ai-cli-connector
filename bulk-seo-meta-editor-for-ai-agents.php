@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.2.5
+ * Version: 1.2.6
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -357,13 +357,24 @@ add_action('rest_api_init', function () {
                 'no_found_rows'  => true,
             ]);
 
+            // Helper character-count columns inserted next to title and description
+            // so the CSV is editable-ready (LibreOffice/Excel: spot over-limit cells
+            // at a glance). Static at export time — re-export to refresh after edits.
+            // Default on; pass ?lengths=0 to get the original column shape.
+            $include_lengths = $req->get_param('lengths') !== '0';
+
             // 'post_title' disambiguates the WP post title from the SEO 'title'
             // alias which maps to _yoast_wpseo_title / rank_math_title.
-            $headers = array_merge(['id', 'url', 'post_type', 'status', 'post_title'], array_keys($active['keys']));
+            $headers = ['id', 'url', 'post_type', 'status', 'post_title'];
+            foreach (array_keys($active['keys']) as $alias) {
+                $headers[] = $alias;
+                if ($include_lengths && $alias === 'title')       $headers[] = 'title_chars';
+                if ($include_lengths && $alias === 'description') $headers[] = 'desc_chars';
+            }
 
             // WP_REST_Response always JSON-encodes its body, so emit raw CSV
             // bytes via rest_pre_serve_request and short-circuit serialization.
-            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $headers) {
+            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $headers, $include_lengths) {
                 if ($served) return $served;
                 if (!headers_sent()) {
                     header('Content-Type: text/csv; charset=utf-8');
@@ -387,6 +398,9 @@ add_action('rest_api_init', function () {
                         $val = get_post_meta($p->ID, $meta_key, true);
                         if (is_array($val)) $val = implode('|', $val);
                         $row[] = $val;
+                        if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
+                            $row[] = mb_strlen((string) $val);
+                        }
                     }
                     // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
                     echo seo_meta_bridge_csv_line($row);

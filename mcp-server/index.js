@@ -141,14 +141,15 @@ const tools = [
   },
   {
     name: 'export_csv',
-    description: 'Export all posts and their SEO meta as CSV. Returns the CSV content as a string. Useful for bulk-editing in a spreadsheet.',
+    description: 'Export all posts and their SEO meta as CSV. Returns the CSV content as a string. Useful for bulk-editing in a spreadsheet. Includes title_chars and desc_chars helper columns by default; pass include_lengths=false to omit them.',
     inputSchema: {
       type: 'object',
       properties: {
-        post_type: { type: 'string', default: 'post,page' },
-        status:    { type: 'string', default: 'publish,draft' },
-        limit:     { type: 'integer', default: 500, maximum: 2000 },
-        offset:    { type: 'integer', default: 0 },
+        post_type:       { type: 'string',  default: 'post,page' },
+        status:          { type: 'string',  default: 'publish,draft' },
+        limit:           { type: 'integer', default: 500, maximum: 2000 },
+        offset:          { type: 'integer', default: 0 },
+        include_lengths: { type: 'boolean', default: true, description: 'Include title_chars / desc_chars helper columns next to title/description.' },
       },
       additionalProperties: false,
     },
@@ -168,7 +169,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.2.5' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.2.6' },
   { capabilities: { tools: {} } }
 );
 
@@ -211,6 +212,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (args.status)    qs.set('status', args.status);
         if (args.limit)     qs.set('limit', String(args.limit));
         if (args.offset)    qs.set('offset', String(args.offset));
+        if (args.include_lengths === false) qs.set('lengths', '0');
         const csv = await wp(`/seo-meta-bridge/v1/export?${qs.toString()}`);
         result = { csv };
         break;
