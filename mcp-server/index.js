@@ -103,7 +103,7 @@ const tools = [
   },
   {
     name: 'bulk_update',
-    description: 'Update SEO meta on up to 100 posts or taxonomy terms in a single call. Each item is { id, meta } for a post, or { id, kind: "term", taxonomy: "<slug>", meta } for a taxonomy term archive (category, tag, product_cat, etc.). Returns per-item status. Requires plugin v1.3.0+ for term updates.',
+    description: 'Update SEO meta on up to 100 resources in a single call. Item shapes by kind: post → { id, meta }; term → { id, kind: "term", taxonomy, meta } (v1.3.0+); cpt_archive → { kind: "cpt_archive", post_type, meta } for CPT archive pages like /challenges/ (v1.4.0+); singleton globals → { kind: "author_archive"|"date_archive"|"search"|"p404"|"home", meta } for site-wide SEO settings (v1.4.0+, requires manage_options). Returns per-item status.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -113,12 +113,13 @@ const tools = [
           items: {
             type: 'object',
             properties: {
-              id:       { type: 'integer' },
-              kind:     { type: 'string', enum: ['post', 'term'], default: 'post', description: 'Defaults to post. Set to "term" to update a taxonomy term archive.' },
-              taxonomy: { type: 'string', description: 'Required when kind=term. Taxonomy slug (category, post_tag, product_cat, etc.).' },
-              meta:     { type: 'object' },
+              id:        { type: 'integer', description: 'Post or term ID. Required for kind=post and kind=term. Ignored (or 0) for cpt_archive / global scopes.' },
+              kind:      { type: 'string', enum: ['post', 'term', 'cpt_archive', 'author_archive', 'date_archive', 'search', 'p404', 'home'], default: 'post', description: 'Resource type: post (default), term (taxonomy), cpt_archive (CPT archive page), or one of the singleton globals.' },
+              taxonomy:  { type: 'string', description: 'Required when kind=term. Taxonomy slug (category, post_tag, product_cat, etc.).' },
+              post_type: { type: 'string', description: 'Required when kind=cpt_archive. CPT slug (challenges, news, product, etc.).' },
+              meta:      { type: 'object' },
             },
-            required: ['id', 'meta'],
+            required: ['meta'],
           },
         },
       },
@@ -158,17 +159,18 @@ const tools = [
   },
   {
     name: 'export_csv',
-    description: 'Export all posts (and optionally taxonomy term archives) and their SEO meta as CSV. Returns the CSV content as a string. Useful for bulk-editing in a spreadsheet. Includes title_chars and desc_chars helper columns by default; pass include_lengths=false to omit them. Set include_terms=true to append term archive rows (categories, tags, custom taxonomies) — requires plugin v1.3.0+.',
+    description: 'Export posts, taxonomy term archives, and/or CPT archive pages with their SEO meta as CSV. Returns the CSV content as a string. Useful for bulk-editing in a spreadsheet. Includes title_chars and desc_chars helper columns by default; pass include_lengths=false to omit. Set include_terms=true (v1.3.0+) for term archive rows; include_archives=true (v1.4.0+) for CPT archive page rows.',
     inputSchema: {
       type: 'object',
       properties: {
-        post_type:       { type: 'string',  default: 'post,page', description: 'Comma-separated post types, or "any" for all public types.' },
-        status:          { type: 'string',  default: 'publish,draft' },
-        limit:           { type: 'integer', default: 500, maximum: 2000 },
-        offset:          { type: 'integer', default: 0 },
-        include_lengths: { type: 'boolean', default: true, description: 'Include title_chars / desc_chars helper columns next to title/description.' },
-        include_terms:   { type: 'boolean', default: false, description: 'Append taxonomy term archive rows (categories, tags, custom taxonomies). Requires plugin v1.3.0+.' },
-        taxonomy:        { type: 'string', description: 'Optional comma-separated taxonomy slugs to include when include_terms=true (default: all public taxonomies).' },
+        post_type:        { type: 'string',  default: 'post,page', description: 'Comma-separated post types, or "any" for all public types.' },
+        status:           { type: 'string',  default: 'publish,draft' },
+        limit:            { type: 'integer', default: 500, maximum: 2000 },
+        offset:           { type: 'integer', default: 0 },
+        include_lengths:  { type: 'boolean', default: true,  description: 'Include title_chars / desc_chars helper columns next to title/description.' },
+        include_terms:    { type: 'boolean', default: false, description: 'Append taxonomy term archive rows (categories, tags, custom taxonomies). Requires plugin v1.3.0+.' },
+        include_archives: { type: 'boolean', default: false, description: 'Append CPT archive page rows (id=0, kind=cpt_archive, post_type=<slug>). Requires plugin v1.4.0+.' },
+        taxonomy:         { type: 'string', description: 'Optional comma-separated taxonomy slugs to include when include_terms=true (default: all public taxonomies).' },
       },
       additionalProperties: false,
     },
@@ -188,7 +190,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.3.0' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.4.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -231,8 +233,9 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (args.status)    qs.set('status', args.status);
         if (args.limit)     qs.set('limit', String(args.limit));
         if (args.offset)    qs.set('offset', String(args.offset));
-        if (args.include_lengths === false) qs.set('lengths', '0');
-        if (args.include_terms === true)    qs.set('include_terms', '1');
+        if (args.include_lengths === false)  qs.set('lengths', '0');
+        if (args.include_terms === true)     qs.set('include_terms', '1');
+        if (args.include_archives === true)  qs.set('include_archives', '1');
         if (args.taxonomy)  qs.set('taxonomy', args.taxonomy);
         const csv = await wp(`/seo-meta-bridge/v1/export?${qs.toString()}`);
         result = { csv };
