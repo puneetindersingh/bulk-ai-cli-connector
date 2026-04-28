@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
- * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, and taxonomy term archives (categories, tags, custom taxonomies). Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.3.0
+ * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
+ * Version: 1.4.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -21,7 +21,7 @@ if (!defined('SEO_META_BRIDGE_VERSION')) {
         define('SEO_META_BRIDGE_VERSION', $sm_bridge_hdr['Version'] ?: '0.0.0');
         unset($sm_bridge_hdr);
     } else {
-        define('SEO_META_BRIDGE_VERSION', '1.3.0');
+        define('SEO_META_BRIDGE_VERSION', '1.4.0');
     }
 }
 
@@ -371,6 +371,287 @@ if (!function_exists('seo_meta_bridge_apply_term_update')) {
     }
 }
 
+if (!function_exists('seo_meta_bridge_active_archive_keys')) {
+    /**
+     * Archive-meta alias map. Yoast stores CPT-archive titles/descriptions as
+     * keys inside the `wpseo_titles` option (e.g. `title-ptarchive-{ptype}`,
+     * `metadesc-ptarchive-{ptype}`); Rank Math uses `rank-math-options-titles`
+     * (e.g. `pt_{ptype}_archive_title`). The alias keys here are the wire
+     * format consumers see — same shape as post/term keys for round-trip.
+     */
+    function seo_meta_bridge_active_archive_keys() {
+        $yoast    = defined('WPSEO_VERSION')    || class_exists('WPSEO_Options');
+        $rankmath = defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper');
+
+        // Yoast: keys are template names; the plugin substitutes %%sitename%%
+        // etc. server-side. We pass through verbatim.
+        $yoast_keys = [
+            'title'        => 'title-ptarchive',
+            'description'  => 'metadesc-ptarchive',
+            'noindex'      => 'noindex-ptarchive',
+            'bctitle'      => 'bctitle-ptarchive',
+        ];
+
+        $rankmath_keys = [
+            'title'        => 'archive_title',
+            'description'  => 'archive_description',
+            'robots'       => 'archive_robots',
+        ];
+
+        if ($yoast)    return ['plugin' => 'yoast',    'keys' => $yoast_keys];
+        if ($rankmath) return ['plugin' => 'rankmath', 'keys' => $rankmath_keys];
+        return ['plugin' => null, 'keys' => []];
+    }
+}
+
+if (!function_exists('seo_meta_bridge_archive_get_value')) {
+    /**
+     * Read one archive-meta value, abstracting Yoast's `wpseo_titles` option-
+     * array vs Rank Math's `rank-math-options-titles` option-array storage.
+     */
+    function seo_meta_bridge_archive_get_value($post_type, $alias_or_key, $plugin) {
+        if ($plugin === 'yoast') {
+            $opt = get_option('wpseo_titles', []);
+            // Accept either alias ("title") or full key ("title-ptarchive").
+            $base = (strpos($alias_or_key, '-ptarchive') === false) ? $alias_or_key . '-ptarchive' : $alias_or_key;
+            $key  = $base . '-' . $post_type;
+            return isset($opt[$key]) ? $opt[$key] : '';
+        }
+        if ($plugin === 'rankmath') {
+            $opt = get_option('rank-math-options-titles', []);
+            $base = $alias_or_key;
+            // Strip leading 'archive_' if user passed the full key.
+            $base = preg_replace('/^archive_/', '', $base);
+            $key  = 'pt_' . $post_type . '_archive_' . $base;
+            return isset($opt[$key]) ? $opt[$key] : '';
+        }
+        return '';
+    }
+}
+
+if (!function_exists('seo_meta_bridge_archive_set_value')) {
+    /**
+     * Write one archive-meta value via read-modify-write of the relevant
+     * option array. Both Yoast and Rank Math keep all archive settings in a
+     * single option, so we update the array and flush once per call.
+     */
+    function seo_meta_bridge_archive_set_value($post_type, $meta_key, $value, $plugin) {
+        if ($plugin === 'yoast') {
+            $opt = get_option('wpseo_titles', []);
+            // meta_key is the Yoast alias ('title-ptarchive'); append the ptype.
+            $key = $meta_key . '-' . $post_type;
+            $opt[$key] = $value;
+            update_option('wpseo_titles', $opt);
+            return true;
+        }
+        if ($plugin === 'rankmath') {
+            $opt = get_option('rank-math-options-titles', []);
+            // meta_key is the Rank Math alias ('archive_title'); wrap with
+            // pt_{ptype}_ prefix so we hit the right field for this CPT.
+            $base = preg_replace('/^archive_/', '', $meta_key);
+            $key  = 'pt_' . $post_type . '_archive_' . $base;
+            $opt[$key] = $value;
+            update_option('rank-math-options-titles', $opt);
+            return true;
+        }
+        return false;
+    }
+}
+
+if (!function_exists('seo_meta_bridge_global_scopes')) {
+    /**
+     * Registry of "global" SEO scopes — non-post, non-term, non-CPT-archive
+     * resources that carry their own title/description settings stored in the
+     * SEO plugin's option arrays. Each scope maps to a Yoast key set (in
+     * `wpseo_titles`) and a Rank Math key set (in `rank-math-options-titles`).
+     *
+     * Use the alias on the wire (`title`, `description`, etc.); the plugin
+     * translates to the storage key for the active SEO plugin.
+     *
+     * To add a new scope: drop another entry into this array. No other code
+     * change needed — bulk/export/import dispatch via this registry.
+     */
+    function seo_meta_bridge_global_scopes() {
+        return [
+            'author_archive' => [
+                'label' => 'Author archive (global)',
+                'yoast' => [
+                    'title'       => 'title-author-wpseo',
+                    'description' => 'metadesc-author-wpseo',
+                    'noindex'     => 'noindex-author-wpseo',
+                    'bctitle'     => 'bctitle-author-wpseo',
+                ],
+                'rankmath' => [
+                    'title'       => 'author_archive_title',
+                    'description' => 'author_archive_description',
+                    'robots'      => 'author_custom_robots',
+                ],
+            ],
+            'date_archive' => [
+                'label' => 'Date archive (global)',
+                'yoast' => [
+                    'title'       => 'title-archive-wpseo',
+                    'description' => 'metadesc-archive-wpseo',
+                    'noindex'     => 'noindex-archive-wpseo',
+                ],
+                'rankmath' => [
+                    'title'       => 'date_archive_title',
+                    'description' => 'date_archive_description',
+                ],
+            ],
+            'search' => [
+                'label' => 'Search results page',
+                'yoast' => [
+                    'title'       => 'title-search-wpseo',
+                    'description' => 'metadesc-search-wpseo',
+                ],
+                'rankmath' => [
+                    'title'       => 'search_title',
+                    'description' => 'search_description',
+                ],
+            ],
+            'p404' => [
+                'label' => '404 page',
+                'yoast' => [
+                    'title'       => 'title-404-wpseo',
+                ],
+                'rankmath' => [
+                    'title'       => '404_title',
+                    'description' => '404_description',
+                ],
+            ],
+            'home' => [
+                'label' => 'Homepage (latest-posts mode)',
+                'yoast' => [
+                    'title'       => 'title-home-wpseo',
+                    'description' => 'metadesc-home-wpseo',
+                ],
+                'rankmath' => [
+                    'title'       => 'homepage_title',
+                    'description' => 'homepage_description',
+                ],
+            ],
+        ];
+    }
+}
+
+if (!function_exists('seo_meta_bridge_global_active_keys')) {
+    /**
+     * Alias map for one global scope under the active SEO plugin. Returns
+     * shape: ['plugin' => 'yoast'|'rankmath'|null, 'keys' => [alias=>storage_key]].
+     */
+    function seo_meta_bridge_global_active_keys($scope) {
+        $yoast    = defined('WPSEO_VERSION')    || class_exists('WPSEO_Options');
+        $rankmath = defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper');
+        $scopes   = seo_meta_bridge_global_scopes();
+        if (!isset($scopes[$scope])) return ['plugin' => null, 'keys' => []];
+        if ($yoast    && !empty($scopes[$scope]['yoast']))    return ['plugin' => 'yoast',    'keys' => $scopes[$scope]['yoast']];
+        if ($rankmath && !empty($scopes[$scope]['rankmath'])) return ['plugin' => 'rankmath', 'keys' => $scopes[$scope]['rankmath']];
+        return ['plugin' => null, 'keys' => []];
+    }
+}
+
+if (!function_exists('seo_meta_bridge_global_get_value')) {
+    function seo_meta_bridge_global_get_value($scope, $alias_or_key, $plugin) {
+        $active = seo_meta_bridge_global_active_keys($scope);
+        if (!$active['plugin']) return '';
+        $key = isset($active['keys'][$alias_or_key]) ? $active['keys'][$alias_or_key] : $alias_or_key;
+        $opt = $plugin === 'yoast' ? get_option('wpseo_titles', []) : get_option('rank-math-options-titles', []);
+        return isset($opt[$key]) ? $opt[$key] : '';
+    }
+}
+
+if (!function_exists('seo_meta_bridge_apply_global_update')) {
+    /**
+     * Apply a meta update to one "global" SEO scope (author_archive,
+     * date_archive, search, p404, home). All globals are admin-only —
+     * `manage_options` cap — because they affect site-wide SEO settings, not
+     * a single post or term.
+     */
+    function seo_meta_bridge_apply_global_update($scope, $meta) {
+        $scopes = seo_meta_bridge_global_scopes();
+        if (!isset($scopes[$scope])) {
+            return ['ok' => false, 'errors' => ['unknown_scope']];
+        }
+        if (!current_user_can('manage_options')) {
+            return ['ok' => false, 'errors' => ['forbidden']];
+        }
+        $active = seo_meta_bridge_global_active_keys($scope);
+        if (!$active['plugin']) {
+            return ['ok' => false, 'errors' => ['no_seo_plugin_or_scope_unsupported']];
+        }
+        $alias_to_meta = $active['keys'];
+        $allowed       = array_values($alias_to_meta);
+        $option_name   = $active['plugin'] === 'yoast' ? 'wpseo_titles' : 'rank-math-options-titles';
+        $opt           = get_option($option_name, []);
+
+        $errors = [];
+        $changed = false;
+        foreach ($meta as $key => $value) {
+            if (isset($alias_to_meta[$key])) {
+                $key = $alias_to_meta[$key];
+            }
+            if (!in_array($key, $allowed, true)) {
+                $errors[] = "unknown_or_disallowed_key:$key";
+                continue;
+            }
+            if (is_string($value)) {
+                $value = sanitize_text_field($value);
+            }
+            $opt[$key] = $value;
+            $changed = true;
+        }
+        if ($changed) {
+            update_option($option_name, $opt);
+        }
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+}
+
+if (!function_exists('seo_meta_bridge_apply_archive_update')) {
+    /**
+     * Apply a meta update to one CPT archive page. Mirrors the post + term
+     * update helpers but writes into the SEO plugin's options-array storage.
+     * Permission: requires the post type's edit_posts cap (or the generic
+     * edit_posts cap if the CPT has no custom cap_type).
+     */
+    function seo_meta_bridge_apply_archive_update($post_type, $meta) {
+        if (!post_type_exists($post_type)) {
+            return ['ok' => false, 'errors' => ['unknown_post_type']];
+        }
+        $pt = get_post_type_object($post_type);
+        if (!$pt || empty($pt->has_archive)) {
+            return ['ok' => false, 'errors' => ['post_type_has_no_archive']];
+        }
+        $cap = isset($pt->cap->edit_posts) ? $pt->cap->edit_posts : 'edit_posts';
+        if (!current_user_can($cap)) {
+            return ['ok' => false, 'errors' => ['forbidden']];
+        }
+        $active = seo_meta_bridge_active_archive_keys();
+        if (!$active['plugin']) {
+            return ['ok' => false, 'errors' => ['no_seo_plugin']];
+        }
+        $alias_to_meta = $active['keys'];
+        $allowed       = array_values($alias_to_meta);
+
+        $errors = [];
+        foreach ($meta as $key => $value) {
+            if (isset($alias_to_meta[$key])) {
+                $key = $alias_to_meta[$key];
+            }
+            if (!in_array($key, $allowed, true)) {
+                $errors[] = "unknown_or_disallowed_key:$key";
+                continue;
+            }
+            if (is_string($value)) {
+                $value = sanitize_text_field($value);
+            }
+            seo_meta_bridge_archive_set_value($post_type, $key, $value, $active['plugin']);
+        }
+        return ['ok' => empty($errors), 'errors' => $errors];
+    }
+}
+
 if (!function_exists('seo_meta_bridge_apply_update')) {
     /**
      * Apply a meta update to one post. Returns ['ok' => bool, 'errors' => [...]].
@@ -426,16 +707,28 @@ add_action('rest_api_init', function () {
         'methods'             => 'GET',
         'permission_callback' => $perm,
         'callback'            => function () {
-            $active      = seo_meta_bridge_active_keys();
-            $term_active = seo_meta_bridge_active_term_keys();
+            $active         = seo_meta_bridge_active_keys();
+            $term_active    = seo_meta_bridge_active_term_keys();
+            $archive_active = seo_meta_bridge_active_archive_keys();
+            $global_scopes  = [];
+            foreach (array_keys(seo_meta_bridge_global_scopes()) as $scope) {
+                $sa = seo_meta_bridge_global_active_keys($scope);
+                if ($sa['plugin']) {
+                    $global_scopes[$scope] = $sa['keys'];
+                }
+            }
             return [
-                'yoast'          => defined('WPSEO_VERSION')    || class_exists('WPSEO_Options'),
-                'rankmath'       => defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper'),
-                'active'         => $active['plugin'],
-                'fields'         => $active['keys'],
-                'term_fields'    => $term_active['keys'],
-                'supports_terms' => !empty($term_active['plugin']),
-                'version'        => SEO_META_BRIDGE_VERSION,
+                'yoast'             => defined('WPSEO_VERSION')    || class_exists('WPSEO_Options'),
+                'rankmath'          => defined('RANK_MATH_VERSION') || class_exists('RankMath\\Helper'),
+                'active'            => $active['plugin'],
+                'fields'            => $active['keys'],
+                'term_fields'       => $term_active['keys'],
+                'archive_fields'    => $archive_active['keys'],
+                'global_scopes'     => $global_scopes,
+                'supports_terms'    => !empty($term_active['plugin']),
+                'supports_archives' => !empty($archive_active['plugin']),
+                'supports_globals'  => !empty($global_scopes),
+                'version'           => SEO_META_BRIDGE_VERSION,
             ];
         },
     ]);
@@ -457,7 +750,47 @@ add_action('rest_api_init', function () {
             foreach ($items as $item) {
                 $id   = isset($item['id']) ? (int) $item['id'] : 0;
                 $meta = isset($item['meta']) && is_array($item['meta']) ? $item['meta'] : [];
-                $kind = isset($item['kind']) && $item['kind'] === 'term' ? 'term' : 'post';
+                $kind_raw = isset($item['kind']) ? (string) $item['kind'] : 'post';
+                $known_kinds = array_merge(['term', 'cpt_archive'], array_keys(seo_meta_bridge_global_scopes()));
+                $kind = in_array($kind_raw, $known_kinds, true) ? $kind_raw : 'post';
+
+                // Singleton "global" SEO scopes — author_archive, date_archive,
+                // search, p404, home. No id, no taxonomy/post_type — the kind
+                // itself names the resource.
+                if (isset(seo_meta_bridge_global_scopes()[$kind])) {
+                    if (!$meta) {
+                        $results[] = ['id' => 0, 'kind' => $kind, 'status' => 'error', 'errors' => ['missing_meta']];
+                        continue;
+                    }
+                    $r = seo_meta_bridge_apply_global_update($kind, $meta);
+                    $results[] = [
+                        'id'     => 0,
+                        'kind'   => $kind,
+                        'status' => $r['ok'] ? 'ok' : 'error',
+                        'errors' => $r['errors'],
+                    ];
+                    continue;
+                }
+
+                if ($kind === 'cpt_archive') {
+                    // CPT archive pages have no row ID — they're a synthetic
+                    // resource keyed on post_type. Don't enforce id != 0.
+                    $post_type = isset($item['post_type']) ? sanitize_key($item['post_type']) : '';
+                    if (!$post_type || !$meta) {
+                        $results[] = ['id' => 0, 'kind' => 'cpt_archive', 'post_type' => $post_type, 'status' => 'error', 'errors' => ['missing_post_type_or_meta']];
+                        continue;
+                    }
+                    $r = seo_meta_bridge_apply_archive_update($post_type, $meta);
+                    $results[] = [
+                        'id'        => 0,
+                        'kind'      => 'cpt_archive',
+                        'post_type' => $post_type,
+                        'status'    => $r['ok'] ? 'ok' : 'error',
+                        'errors'    => $r['errors'],
+                    ];
+                    continue;
+                }
+
                 if (!$id || !$meta) {
                     $results[] = ['id' => $id, 'kind' => $kind, 'status' => 'error', 'errors' => ['missing_id_or_meta']];
                     continue;
@@ -519,6 +852,7 @@ add_action('rest_api_init', function () {
             $limit            = min(2000, max(1, (int) ($req->get_param('limit') ?: 500)));
             $offset           = max(0, (int) ($req->get_param('offset') ?: 0));
             $include_terms    = (string) $req->get_param('include_terms') === '1';
+            $include_archives = (string) $req->get_param('include_archives') === '1';
             $taxonomies_param = $req->get_param('taxonomy');
             $taxonomies = $taxonomies_param
                 ? array_map('trim', explode(',', $taxonomies_param))
@@ -573,9 +907,23 @@ add_action('rest_api_init', function () {
                 }
             }
 
+            // CPT archives — synthetic rows for each public CPT with has_archive=true.
+            // post_type column carries the CPT slug; id stays 0 (archives have no
+            // row ID); kind=cpt_archive flags the row for round-trip dispatch.
+            $archive_active = seo_meta_bridge_active_archive_keys();
+            $archive_rows = [];
+            if ($include_archives && $archive_active['plugin']) {
+                foreach (get_post_types(['public' => true, 'has_archive' => true], 'objects') as $pt_obj) {
+                    if (empty($pt_obj->has_archive)) continue;
+                    $link = get_post_type_archive_link($pt_obj->name);
+                    if (!$link) continue;
+                    $archive_rows[] = ['post_type' => $pt_obj->name, 'label' => $pt_obj->labels->name ?? $pt_obj->name, 'link' => $link];
+                }
+            }
+
             // WP_REST_Response always JSON-encodes its body, so emit raw CSV
             // bytes via rest_pre_serve_request and short-circuit serialization.
-            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $term_active, $headers, $include_lengths, $term_rows, $field_aliases) {
+            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $term_active, $archive_active, $headers, $include_lengths, $term_rows, $archive_rows, $field_aliases) {
                 if ($served) return $served;
                 if (!headers_sent()) {
                     header('Content-Type: text/csv; charset=utf-8');
@@ -625,6 +973,38 @@ add_action('rest_api_init', function () {
                         }
                         $row[] = 'term';
                         $row[] = $tax;
+                        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
+                        echo seo_meta_bridge_csv_line($row);
+                    }
+                }
+                if ($archive_active['plugin']) {
+                    // CPT-archive rows: id=0, post_type=<cpt_slug>, kind='cpt_archive'.
+                    // The "post_title" column carries the CPT label so the row is
+                    // human-recognisable in spreadsheets. Field-alias columns are
+                    // populated from each plugin's archive option storage.
+                    foreach ($archive_rows as $ar) {
+                        $pt   = $ar['post_type'];
+                        $row  = [0, $ar['link'], $pt, '', $ar['label']];
+                        // We need to emit the SAME number of cells as $headers,
+                        // matching the post-row column shape. The column aliases
+                        // were derived from $active or $term_active (whichever
+                        // exists) — archive aliases overlap on title/description
+                        // but may not cover other fields. Map by alias name:
+                        //   if archive_active has the alias → emit value;
+                        //   else → emit empty (preserves CSV column count).
+                        foreach ($field_aliases as $alias) {
+                            $val = '';
+                            if (isset($archive_active['keys'][$alias])) {
+                                $val = seo_meta_bridge_archive_get_value($pt, $archive_active['keys'][$alias], $archive_active['plugin']);
+                                if (is_array($val)) $val = implode('|', $val);
+                            }
+                            $row[] = $val;
+                            if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
+                                $row[] = mb_strlen((string) $val);
+                            }
+                        }
+                        $row[] = 'cpt_archive';
+                        $row[] = '';  // taxonomy column repurposed empty for archive rows
                         // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
                         echo seo_meta_bridge_csv_line($row);
                     }
@@ -690,16 +1070,80 @@ add_action('rest_api_init', function () {
                 return new WP_Error('too_many', 'max 2000 rows per import', ['status' => 400]);
             }
 
-            $active      = seo_meta_bridge_active_keys();
-            $term_active = seo_meta_bridge_active_term_keys();
+            $active         = seo_meta_bridge_active_keys();
+            $term_active    = seo_meta_bridge_active_term_keys();
+            $archive_active = seo_meta_bridge_active_archive_keys();
             // Trailing kind/taxonomy columns (v1.3.0+) flag term rows in a
             // mixed export. v1.2.x CSVs lack them — kind defaults to 'post'.
+            // cpt_archive rows (v1.4.0+) reuse the post_type column for the
+            // CPT slug and have id=0.
             $non_meta_cols = ['id', 'url', 'post_type', 'status', 'post_title', 'kind', 'taxonomy'];
 
             $results = [];
             foreach ($rows as $row) {
                 $id   = isset($row['id']) ? (int) $row['id'] : 0;
-                $kind = isset($row['kind']) && $row['kind'] === 'term' ? 'term' : 'post';
+                $kind_raw = isset($row['kind']) ? (string) $row['kind'] : 'post';
+                $known_kinds = array_merge(['term', 'cpt_archive'], array_keys(seo_meta_bridge_global_scopes()));
+                $kind = in_array($kind_raw, $known_kinds, true) ? $kind_raw : 'post';
+
+                if (isset(seo_meta_bridge_global_scopes()[$kind])) {
+                    $alias_to_meta = seo_meta_bridge_global_active_keys($kind)['keys'];
+                    $meta = [];
+                    foreach ($row as $col => $val) {
+                        if (in_array($col, $non_meta_cols, true)) continue;
+                        if ($val === null || $val === '') continue;
+                        if (isset($alias_to_meta[$col])) {
+                            $meta[$alias_to_meta[$col]] = $val;
+                        } elseif (in_array($col, $alias_to_meta, true)) {
+                            $meta[$col] = $val;
+                        }
+                    }
+                    if (!$meta) {
+                        $results[] = ['id' => 0, 'kind' => $kind, 'status' => 'noop', 'errors' => []];
+                        continue;
+                    }
+                    $r = seo_meta_bridge_apply_global_update($kind, $meta);
+                    $results[] = [
+                        'id'     => 0,
+                        'kind'   => $kind,
+                        'status' => $r['ok'] ? 'ok' : 'error',
+                        'errors' => $r['errors'],
+                    ];
+                    continue;
+                }
+
+                if ($kind === 'cpt_archive') {
+                    $post_type = isset($row['post_type']) ? sanitize_key($row['post_type']) : '';
+                    $alias_to_meta = $archive_active['keys'];
+                    $meta = [];
+                    foreach ($row as $col => $val) {
+                        if (in_array($col, $non_meta_cols, true)) continue;
+                        if ($val === null || $val === '') continue;
+                        if (isset($alias_to_meta[$col])) {
+                            $meta[$alias_to_meta[$col]] = $val;
+                        } elseif (in_array($col, $alias_to_meta, true)) {
+                            $meta[$col] = $val;
+                        }
+                    }
+                    if (!$post_type) {
+                        $results[] = ['id' => 0, 'kind' => 'cpt_archive', 'status' => 'error', 'errors' => ['missing_post_type']];
+                        continue;
+                    }
+                    if (!$meta) {
+                        $results[] = ['id' => 0, 'kind' => 'cpt_archive', 'post_type' => $post_type, 'status' => 'noop', 'errors' => []];
+                        continue;
+                    }
+                    $r = seo_meta_bridge_apply_archive_update($post_type, $meta);
+                    $results[] = [
+                        'id'        => 0,
+                        'kind'      => 'cpt_archive',
+                        'post_type' => $post_type,
+                        'status'    => $r['ok'] ? 'ok' : 'error',
+                        'errors'    => $r['errors'],
+                    ];
+                    continue;
+                }
+
                 if (!$id) {
                     $results[] = ['id' => 0, 'kind' => $kind, 'status' => 'error', 'errors' => ['missing_id']];
                     continue;
