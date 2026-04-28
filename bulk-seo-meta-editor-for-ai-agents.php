@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.4.0
+ * Version: 1.4.1
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -316,6 +316,40 @@ if (!function_exists('seo_meta_bridge_term_set_value')) {
             }
             $opt[$taxonomy][$term_id][$meta_key] = $value;
             update_option('wpseo_taxonomy_meta', $opt);
+            // Yoast 14+ caches rendered SEO meta in the yoast_indexable table.
+            // Updating wpseo_taxonomy_meta directly bypasses Yoast's hook chain,
+            // so the indexable stays stale and the FRONT-END keeps rendering the
+            // old meta description (verified on a real WP/Cloudflare site —
+            // page cache cleared, but meta unchanged because Yoast served a
+            // stale Indexable). Fire Yoast's own term-save signal so its
+            // Indexable_Term_Watcher rebuilds the cached row for this term.
+            // No-op when Yoast isn't installed; safe when the action isn't
+            // hooked. Wrapped in function_exists for older Yoasts that
+            // don't ship this hook.
+            do_action('wpseo_save_taxonomy_meta', (int) $term_id, (string) $taxonomy);
+            // Belt-and-braces: also fire WordPress's own edited_term hook —
+            // Yoast's watcher listens to that as a fallback, and a few SEO
+            // caches/CDN integrations (W3TC, WPRocket, Cloudflare APO) listen
+            // for it to purge per-URL caches. Args: term_id, term_taxonomy_id,
+            // taxonomy. We don't have term_taxonomy_id handy; pass term_id —
+            // every consumer we care about reads $term_id, not $tt_id.
+            do_action('edited_term', (int) $term_id, (int) $term_id, (string) $taxonomy);
+            // Direct indexable wipe as final safety net — if the Yoast classes
+            // are loaded, delete the Indexable row for this term so Yoast
+            // rebuilds on next request. Newer Yoasts expose a builder; older
+            // ones use the legacy table directly.
+            if (class_exists('\\Yoast\\WP\\SEO\\Repositories\\Indexable_Repository')
+                && function_exists('YoastSEO')) {
+                try {
+                    $repo = YoastSEO()->classes->get('\\Yoast\\WP\\SEO\\Repositories\\Indexable_Repository');
+                    if ($repo && method_exists($repo, 'find_by_id_and_type')) {
+                        $idx = $repo->find_by_id_and_type((int) $term_id, 'term', false);
+                        if ($idx && method_exists($idx, 'delete')) {
+                            $idx->delete();
+                        }
+                    }
+                } catch (\Throwable $e) { /* swallow — best-effort */ }
+            }
             return true;
         }
         return false;
