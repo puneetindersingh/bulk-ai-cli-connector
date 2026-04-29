@@ -26,6 +26,18 @@ if (!BASE || !USER || !PASS) {
 
 const auth = 'Basic ' + Buffer.from(`${USER}:${PASS}`).toString('base64');
 
+// Apache mod_security and several WP security plugins (Wordfence, Solid
+// Security) return 403 to anything whose User-Agent looks like a bot or
+// HTTP library. Node's default fetch UA ("node") and "node-fetch/x" both
+// trip these rulesets, so requests get blocked before WordPress even sees
+// the auth header. Send a regular browser UA on every request — it's
+// purely about getting past the WAF, not about pretending to be a browser.
+// Override with MCP_USER_AGENT env var if you want a custom string.
+const UA = process.env.MCP_USER_AGENT
+  || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+   + 'AppleWebKit/537.36 (KHTML, like Gecko) '
+   + 'Chrome/124.0 Safari/537.36 BulkSEOMetaEditorMCP';
+
 // Build a REST URL using ?rest_route=/X form. This is the universal URL
 // shape — it works on every WP install (pretty permalinks or plain), so
 // we don't need to detect permalink structure or worry about htaccess /
@@ -56,7 +68,7 @@ function restUrl(path, params) {
 
 async function wp(path, init = {}) {
   const url = restUrl(path);
-  const headers = { 'Authorization': auth, ...(init.headers || {}) };
+  const headers = { 'Authorization': auth, 'User-Agent': UA, ...(init.headers || {}) };
   if (init.body && typeof init.body === 'object' && !(init.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(init.body);

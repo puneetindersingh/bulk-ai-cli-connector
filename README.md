@@ -189,6 +189,43 @@ Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤
 - URL-shaped fields are run through `esc_url_raw` before save.
 - No new admin UI; nothing to misconfigure.
 
+## Troubleshooting
+
+### `403 Forbidden` from `/wp-json/seo-meta-bridge/v1/...` even with correct credentials
+
+If `curl -u 'user:app pass' https://yoursite.com/wp-json/seo-meta-bridge/v1/status` returns `200` but the same call from a Python (`requests`) or Node (`fetch`) script with the same credentials returns `403`, the host's web-application firewall (Apache `mod_security`, Wordfence, Solid Security, Cloudflare WAF, etc.) is blocking the request based on **User-Agent** before WordPress ever sees it. Default UAs like `python-requests/2.x` and Node's bare `node`/`node-fetch/x` are on most WAF blocklists.
+
+**Fix:** send a regular browser User-Agent on every request.
+
+```python
+# Python
+requests.get(url, auth=(user, pw), headers={
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                  'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+})
+```
+
+```js
+// Node
+await fetch(url, {
+  headers: {
+    'Authorization': auth,
+    'User-Agent': 'Mozilla/5.0 (...) Chrome/124.0 Safari/537.36',
+  },
+});
+```
+
+The bundled MCP server does this automatically (v1.4.2+). Override the UA with `MCP_USER_AGENT` if your host has a stricter rule.
+
+### Symptoms cheat-sheet
+
+| Status | Likely cause |
+|---|---|
+| `401 Unauthorized` from any endpoint | Wrong username, wrong/revoked Application Password, or HTTPS not enabled (App Passwords are HTTPS-only by default) |
+| `403 Forbidden` (HTML body) from REST endpoints, but admin login works | WAF blocking by User-Agent — see above |
+| `404 rest_no_route` from `/seo-meta-bridge/v1/...` | Plugin not installed/active on this site (or this subsite, on multisite) |
+| Front-end shows old meta after a successful `/bulk` write | Page cache (LiteSpeed, WP Rocket, Cloudflare APO) — purge the URL. Yoast indexable cache is auto-flushed by v1.4.1+ |
+
 ## License
 
 GPL-2.0-or-later.

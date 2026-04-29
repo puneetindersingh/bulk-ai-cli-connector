@@ -58,6 +58,31 @@ Uses standard WordPress Application Passwords. **HTTPS required in production.**
 
 The server uses the universal `?rest_route=/X` URL form, so it works on every WordPress install regardless of permalink structure or web server (no dependence on htaccess / nginx rewrites).
 
+## Troubleshooting
+
+### `WP 403` errors despite correct credentials
+
+Some hosts (Apache `mod_security`, Wordfence, Solid Security, Cloudflare WAF) reject HTTP-library User-Agents before the request reaches WordPress. From v1.4.2 the server sends a browser-shaped User-Agent automatically. If a host has a stricter rule, override it:
+
+```bash
+claude mcp add bulk-seo-meta-editor \
+  --env WP_BASE_URL=https://your-site.com \
+  --env WP_USER=your-username \
+  --env WP_APP_PASS='xxxx xxxx xxxx xxxx xxxx xxxx' \
+  --env MCP_USER_AGENT='Your custom UA string' \
+  -- npx -y bulk-seo-meta-editor-mcp
+```
+
+### `WP 401` for every call
+
+Application Password is wrong/revoked, or the WordPress site has Application Passwords disabled. Test with curl first:
+
+```bash
+curl -u 'user:app pass' https://your-site.com/wp-json/seo-meta-bridge/v1/status
+```
+
+If curl returns 200 but the MCP server still fails, your credentials are reaching the site but the env vars passed to MCP don't match — re-check `WP_USER` and `WP_APP_PASS`.
+
 ## License
 
 GPL-2.0-or-later
