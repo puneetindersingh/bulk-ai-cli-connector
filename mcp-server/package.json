@@ -1,6 +1,6 @@
 {
   "name": "bulk-seo-meta-editor-mcp",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "MCP server for Bulk SEO Meta Editor for AI Agents — lets Claude Code / Claude Desktop bulk-update Yoast or Rank Math SEO meta tags on WordPress sites, including taxonomy term archives (categories, tags, custom taxonomies), CPT archive pages, and global SEO scopes (author/date/search/404/home).",
   "type": "module",
   "bin": {
