@@ -64,6 +64,10 @@ A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-seo-
 * URL-shaped fields (canonical, og_image, twitter_image) sanitised through `esc_url_raw`
 * No new admin UI, no settings page, nothing to misconfigure
 
+= Trademarks =
+
+Yoast SEO is a trademark of Yoast BV. Rank Math is a trademark of RankMath. Claude is a trademark of Anthropic PBC. ChatGPT is a trademark of OpenAI OpCo. WordPress is a trademark of the WordPress Foundation. All other product names, logos, and brands are property of their respective owners. This plugin is an independent integration and is not affiliated with, endorsed by, or sponsored by any of them. Trademarks are referenced only to describe interoperability with the listed products.
+
 == Installation ==
 
 1. Upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**, or drop the PHP file into `wp-content/plugins/` via SFTP
