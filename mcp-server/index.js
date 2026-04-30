@@ -202,7 +202,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.4.0' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.4.2' },
   { capabilities: { tools: {} } }
 );
 

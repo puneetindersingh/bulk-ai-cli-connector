@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.4.1
+ * Version: 1.4.2
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -21,7 +21,7 @@ if (!defined('SEO_META_BRIDGE_VERSION')) {
         define('SEO_META_BRIDGE_VERSION', $sm_bridge_hdr['Version'] ?: '0.0.0');
         unset($sm_bridge_hdr);
     } else {
-        define('SEO_META_BRIDGE_VERSION', '1.4.0');
+        define('SEO_META_BRIDGE_VERSION', '1.4.2');
     }
 }
 
@@ -892,7 +892,16 @@ add_action('rest_api_init', function () {
                 ? array_map('trim', explode(',', $taxonomies_param))
                 : array_values(get_taxonomies(['public' => true], 'names'));
 
-            $query = new WP_Query([
+            // Author scoping for /export. When the caller lacks edit_others_posts
+            // (i.e. Author / Contributor roles), restrict the query to posts they
+            // own — mirrors the wp-admin Posts list, which hides other users'
+            // drafts from these roles. Without this filter, a low-privilege user
+            // with an app password could call /export?status=draft and read
+            // titles + SEO meta of every draft on the site, including ones they
+            // were never supposed to see in admin. Editors and Administrators
+            // (which have edit_others_posts) see everything as before — no
+            // behaviour change for normal /export consumers.
+            $query_args = [
                 'post_type'      => $post_types,
                 'post_status'    => array_map('trim', explode(',', $status)),
                 'posts_per_page' => $limit,
@@ -900,7 +909,11 @@ add_action('rest_api_init', function () {
                 'orderby'        => 'ID',
                 'order'          => 'ASC',
                 'no_found_rows'  => true,
-            ]);
+            ];
+            if (!current_user_can('edit_others_posts')) {
+                $query_args['author'] = get_current_user_id();
+            }
+            $query = new WP_Query($query_args);
 
             // Helper character-count columns inserted next to title and description
             // so the CSV is editable-ready (LibreOffice/Excel: spot over-limit cells
