@@ -2,3 +2,8 @@ node_modules/
 *.zip
 .DS_Store
 *.log
+
+# Private wp.org correspondence — never commit
+wp-org-reply-*.txt
+wp-org-*.eml
+wp-org-*.md

@@ -3,12 +3,12 @@ Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
 Tested up to: 6.9
-Stable tag: 1.4.2
+Stable tag: 1.5.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Bulk-update Yoast SEO or Rank Math meta tags via REST API. For AI agents and automation scripts. CSV import/export and MCP server included.
+Bulk-update Yoast SEO or Rank Math meta tags AND media-library image alt text via REST API. For AI agents and automation scripts.
 
 == Description ==
 
@@ -21,6 +21,7 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 * **REST endpoints** — read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route or the namespaced helpers
 * **Taxonomy term archives** — edit SEO meta on category/tag/custom-taxonomy archive pages too, not just posts (Yoast and Rank Math both supported)
 * **Bulk update** — apply changes to up to 100 posts or terms in a single call
+* **Bulk image alt text** — update `_wp_attachment_image_alt` on up to 200 media-library attachments per call by image URL. Resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment automatically (v1.5.0+)
 * **CSV import / export** — round-trip your SEO meta through Excel or Google Sheets, posts and terms in one file
 * **MCP server** — bundled Node.js companion (`bulk-seo-meta-editor-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
 * **Auto-detection** — works with Yoast SEO or Rank Math, picks the active one automatically
@@ -32,7 +33,8 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-meta-bridge/v1/...` on plain-permalink installs):
 
 * `GET /status` — detect the active SEO plugin and list available fields
-* `POST /bulk` — update SEO meta on up to 100 posts in one call
+* `POST /bulk` — update SEO meta on up to 100 posts/terms in one call
+* `POST /bulk-alts` — update image alt text on up to 200 media-library attachments by URL
 * `GET /export` — stream all posts' SEO meta as CSV
 * `POST /import` — apply updates from a CSV upload or JSON rows array
 
@@ -113,6 +115,14 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 1.5.1 =
+* Internal — renamed all internal PHP function and define prefixes from `seo_meta_bridge_*` / `SEO_META_BRIDGE_*` to `bulkseme_*` / `BULKSEME_*` so the prefix derives directly from the plugin slug. No public REST surface changes — endpoints still live at `/wp-json/seo-meta-bridge/v1/*`. No migration required.
+* Internal — removed `if (!function_exists(...))` guards around the plugin's own helper functions per WordPress.org plugin guidelines. Unique prefixes prevent collisions; the guards were unnecessary and risked loading a same-named function from another plugin instead of ours.
+* Code clarity — added comments next to `update_option('wpseo_titles', ...)` and `update_option('rank-math-options-titles', ...)` documenting that those option keys belong to Yoast SEO and Rank Math respectively, not this plugin. We integrate WITH those plugins by reading and writing the exact keys they use; a custom-prefixed key would store data nowhere those plugins look.
+
+= 1.5.0 =
+* **New — bulk update image alt text.** New endpoint `POST /seo-meta-bridge/v1/bulk-alts` accepts `{ items: [{ image_url, new_alt }, ...] }` (max 200/req) and updates `_wp_attachment_image_alt` on the matching media-library attachment. Resolves URLs via `attachment_url_to_postid()` with two fallbacks: strips `-WIDTHxHEIGHT.ext` size suffix (so a `-300x200.jpg` thumb still maps to its parent attachment), then strips any query string. Each row reports `status: ok | unchanged | skipped | error` plus `attachment_id`, `matched_via`, and `previous_alt` so callers can audit changes. Skipped rows include a hint when the URL doesn't resolve to a media-library item (typical for CDN-hosted or page-builder-hardcoded images). `/status` now reports `supports_alts: true`.
+
 = 1.4.2 =
 * **Security — `/export` now filters by author for low-privilege roles.** Authors and Contributors (anyone with `edit_posts` but not `edit_others_posts`) calling `/export` previously received titles and SEO meta for every post and draft on the site, including drafts owned by other users. The endpoint now scopes the underlying `WP_Query` to the calling user's own authored posts when they lack `edit_others_posts`, matching the behaviour of the wp-admin Posts list. No change for Editors or Administrators — they continue to see all posts as before. Recommended upgrade for any site with multi-author setups.
 
@@ -171,6 +181,12 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.5.1 =
+Internal cleanup per WordPress.org review feedback. No public API changes; safe to upgrade.
+
+= 1.5.0 =
+New endpoint to bulk-update image alt text on media-library attachments. No breaking changes.
 
 = 1.2.0 =
 Initial release.
