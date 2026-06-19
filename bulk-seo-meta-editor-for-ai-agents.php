@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.5.1
+ * Version: 1.6.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -21,7 +21,7 @@ if (!defined('BULKSEME_VERSION')) {
         define('BULKSEME_VERSION', $bulkseme_hdr['Version'] ?: '0.0.0');
         unset($bulkseme_hdr);
     } else {
-        define('BULKSEME_VERSION', '1.5.1');
+        define('BULKSEME_VERSION', '1.6.0');
     }
 }
 
@@ -687,6 +687,22 @@ function bulkseme_apply_update($post_id, $meta) {
 
     $errors = [];
     foreach ($meta as $key => $value) {
+        // Plugin-owned JSON-LD schema fields. These are independent of the active
+        // SEO plugin (they ride that plugin's schema graph at output time), so they
+        // are handled before the Yoast/Rank Math allowlist below. See the
+        // "Custom JSON-LD schema" section lower in this file.
+        if ($key === 'schema' || $key === '_bulkseme_schema_jsonld') {
+            $res = bulkseme_store_schema($post_id, $value);
+            if ($res !== true) {
+                $errors[] = $res;
+            }
+            continue;
+        }
+        if ($key === 'schema_mode' || $key === '_bulkseme_schema_mode') {
+            update_post_meta($post_id, '_bulkseme_schema_mode', $value === 'replace' ? 'replace' : 'add');
+            continue;
+        }
+
         // Accept friendly aliases (title, description, focus_kw, ...) and translate
         // to the active plugin's raw meta key. Lets /export columns round-trip
         // through /bulk without manual key remapping.
@@ -709,6 +725,146 @@ function bulkseme_apply_update($post_id, $meta) {
     }
     return ['ok' => empty($errors), 'errors' => $errors];
 }
+
+// =============================================================================
+// Custom JSON-LD schema (per post/page)
+// =============================================================================
+// Self-contained module. Lets an AI agent store a block of JSON-LD against a
+// post and have it rendered in the page's structured data. We do NOT echo any
+// markup ourselves. Instead we hand the decoded nodes to whichever SEO plugin
+// is active so it encodes and prints them inside its own schema graph:
+//   * Yoast SEO  -> wpseo_schema_graph filter
+//   * Rank Math  -> rank_math/json_ld filter
+// Two upsides: (1) no output-escaping surface in our code, the SEO plugin owns
+// encoding; (2) the nodes join the existing @graph instead of creating a second
+// competing block, so there is no duplicate-schema conflict.
+//
+// Storage (prefixed, protected postmeta):
+//   _bulkseme_schema_jsonld  raw JSON-LD string (validated on write)
+//   _bulkseme_schema_mode    'add' (merge into the graph) or 'replace'
+//                            (our nodes become the whole graph for that page)
+
+/**
+ * Validate and store a JSON-LD blob against a post. An empty value clears it.
+ * Returns true on success, or a short error string on invalid JSON.
+ *
+ * The value is re-encoded canonically and wp_slash()'d before saving because
+ * update_metadata() runs wp_unslash() on the value; without the matching slash,
+ * backslash escapes inside the JSON (\", \n, \uXXXX) would be stripped and
+ * corrupt the stored document.
+ */
+function bulkseme_store_schema($post_id, $value) {
+    $raw = is_string($value) ? trim($value) : '';
+    if ($raw === '') {
+        delete_post_meta($post_id, '_bulkseme_schema_jsonld');
+        return true;
+    }
+    $decoded = json_decode($raw, true);
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+        return 'invalid_json_schema';
+    }
+    $canonical = wp_json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($canonical)) {
+        return 'invalid_json_schema';
+    }
+    update_post_meta($post_id, '_bulkseme_schema_jsonld', wp_slash($canonical));
+    return true;
+}
+
+/**
+ * Decode a post's stored JSON-LD into a flat list of node arrays, ready to drop
+ * into a schema @graph. Accepts three author shapes:
+ *   1. a full document  { "@context": "...", "@graph": [ ...nodes ] }
+ *   2. a bare list       [ ...nodes ]
+ *   3. a single node     { "@type": "FAQPage", ... }
+ * Per-node "@context" is stripped because the SEO plugin sets one top-level
+ * context for the whole graph.
+ */
+function bulkseme_schema_nodes_for_post($post_id) {
+    $raw = get_post_meta($post_id, '_bulkseme_schema_jsonld', true);
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded) || empty($decoded)) {
+        return [];
+    }
+
+    if (isset($decoded['@graph']) && is_array($decoded['@graph'])) {
+        $nodes = $decoded['@graph'];
+    } elseif (array_keys($decoded) === range(0, count($decoded) - 1)) {
+        $nodes = $decoded; // bare numeric list of nodes
+    } else {
+        $nodes = [$decoded]; // single node object
+    }
+
+    $clean = [];
+    foreach ($nodes as $node) {
+        if (!is_array($node) || empty($node)) {
+            continue;
+        }
+        unset($node['@context']);
+        $clean[] = $node;
+    }
+    return $clean;
+}
+
+/**
+ * 'add' (default) or 'replace' for a post's stored schema.
+ */
+function bulkseme_schema_mode_for_post($post_id) {
+    return get_post_meta($post_id, '_bulkseme_schema_mode', true) === 'replace' ? 'replace' : 'add';
+}
+
+/**
+ * The schema nodes + mode for the post currently being rendered. Returns empty
+ * nodes for non-singular views (archives, search, home), where per-post schema
+ * does not apply.
+ */
+function bulkseme_current_schema() {
+    if (!is_singular()) {
+        return ['mode' => 'add', 'nodes' => []];
+    }
+    $post_id = get_queried_object_id();
+    if (!$post_id) {
+        return ['mode' => 'add', 'nodes' => []];
+    }
+    return [
+        'mode'  => bulkseme_schema_mode_for_post($post_id),
+        'nodes' => bulkseme_schema_nodes_for_post($post_id),
+    ];
+}
+
+// ---- Yoast SEO: merge our nodes into its @graph -----------------------------
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Yoast SEO's own public Schema API filter; we are a consumer of it, not the owner.
+add_filter('wpseo_schema_graph', function ($graph, $context) {
+    $schema = bulkseme_current_schema();
+    if (empty($schema['nodes'])) {
+        return $graph;
+    }
+    if ($schema['mode'] === 'replace') {
+        return array_values($schema['nodes']);
+    }
+    return array_merge(is_array($graph) ? $graph : [], $schema['nodes']);
+}, 11, 2);
+
+// ---- Rank Math: merge our nodes into its JSON-LD data ------------------------
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Rank Math's own public JSON-LD filter; we are a consumer of it, not the owner.
+add_filter('rank_math/json_ld', function ($data, $jsonld) {
+    $schema = bulkseme_current_schema();
+    if (empty($schema['nodes'])) {
+        return $data;
+    }
+    if (!is_array($data) || $schema['mode'] === 'replace') {
+        $data = [];
+    }
+    $i = 0;
+    foreach ($schema['nodes'] as $node) {
+        $data['bulkseme_schema_' . $i] = $node;
+        $i++;
+    }
+    return $data;
+}, 99, 2);
 
 add_action('rest_api_init', function () {
 
@@ -741,7 +897,45 @@ add_action('rest_api_init', function () {
                 'supports_archives' => !empty($archive_active['plugin']),
                 'supports_globals'  => !empty($global_scopes),
                 'supports_alts'     => true,
+                'supports_schema'   => true,
+                'schema_fields'     => [
+                    'schema'      => '_bulkseme_schema_jsonld',
+                    'schema_mode' => '_bulkseme_schema_mode',
+                ],
                 'version'           => BULKSEME_VERSION,
+            ];
+        },
+    ]);
+
+    // -------- /schema --------------------------------------------------------
+    // GET /schema?id=123 — read back the custom JSON-LD stored against a post
+    // (plus its add/replace mode). Useful for an agent to verify what it wrote,
+    // or to audit which posts already carry custom schema. Decoded so callers
+    // get an object, not a re-encoded string.
+    register_rest_route('seo-meta-bridge/v1', '/schema', [
+        'methods'             => 'GET',
+        'permission_callback' => $perm,
+        'args'                => [
+            'id' => [
+                'required'          => true,
+                'sanitize_callback' => 'absint',
+            ],
+        ],
+        'callback'            => function (WP_REST_Request $req) {
+            $id = (int) $req->get_param('id');
+            if (!$id || !get_post($id)) {
+                return new WP_Error('post_not_found', 'post not found', ['status' => 404]);
+            }
+            if (!current_user_can('edit_post', $id)) {
+                return new WP_Error('forbidden', 'cannot edit this post', ['status' => 403]);
+            }
+            $raw = get_post_meta($id, '_bulkseme_schema_jsonld', true);
+            $decoded = (is_string($raw) && $raw !== '') ? json_decode($raw, true) : null;
+            return [
+                'id'     => $id,
+                'mode'   => bulkseme_schema_mode_for_post($id),
+                'has_schema' => !empty($decoded),
+                'schema' => $decoded,
             ];
         },
     ]);
@@ -837,7 +1031,7 @@ add_action('rest_api_init', function () {
     ]);
 
     // -------- /bulk-alts -----------------------------------------------------
-    // Body: { items: [{ image_url: "https://.../foo.jpg", new_alt: "..." }, ...] }
+    // Body: { items: [{ image_url: "(full media-library image URL)", new_alt: "..." }, ...] }
     //
     // For each item: resolve the URL to an attachment via attachment_url_to_postid.
     // Strip any size suffix (-1024x768, -300x300) so a thumb URL still maps to

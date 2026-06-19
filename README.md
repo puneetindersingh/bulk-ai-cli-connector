@@ -4,8 +4,11 @@ A WordPress plugin that lets AI agents (Claude, GPT, Perplexity) and scripts bul
 
 Includes:
 
-- REST endpoints for individual and **bulk updates** (up to 100 posts/call)
+- REST endpoints for individual and **bulk meta-tag updates** (up to 100 posts/call): titles, descriptions, canonical, robots, Open Graph and Twitter fields
+- **Bulk image alt text** updates by image URL (resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment)
+- **Custom JSON-LD schema** injection per post (FAQPage, Service, LocalBusiness, HowTo, any type), merged into the active SEO plugin's existing schema graph
 - **CSV import/export** for spreadsheet-based editing
+- Taxonomy term archives, CPT archive pages, and global SEO scopes (author/date/search/404/home)
 - A bundled **MCP server** so Claude Code or Claude Desktop can drive it with one-command setup
 
 ## What problem does it solve?
@@ -123,6 +126,37 @@ curl -u 'user:app pass' -X POST https://site.com/wp-json/seo-meta-bridge/v1/impo
   -F 'csv=@updated.csv'
 ```
 
+### `POST /wp-json/seo-meta-bridge/v1/bulk-alts` (image alt text)
+
+Update image alt text on up to 200 media-library attachments by image URL. The plugin resolves each URL to its attachment (stripping `-WIDTHxHEIGHT` size suffixes and query strings) and updates `_wp_attachment_image_alt`.
+
+```bash
+curl -u 'user:app pass' -X POST https://site.com/wp-json/seo-meta-bridge/v1/bulk-alts \
+  -H 'Content-Type: application/json' \
+  -d '{ "items": [ { "image_url": "https://site.com/wp-content/uploads/photo.jpg", "new_alt": "Descriptive alt text" } ] }'
+```
+
+Each row reports `status` (`ok` / `unchanged` / `skipped` / `error`), the resolved `attachment_id`, and the `previous_alt`.
+
+### Custom JSON-LD schema (via `/bulk` + `/schema`)
+
+Attach custom JSON-LD to a post. The plugin stores it and injects it into the active SEO plugin's schema graph at render time (Yoast via `wpseo_schema_graph`, Rank Math via `rank_math/json_ld`), so your nodes join the existing `@graph` rather than creating a second, competing block. The plugin emits no markup of its own, so there is no output-escaping surface.
+
+```bash
+curl -u 'user:app pass' -X POST https://site.com/wp-json/seo-meta-bridge/v1/bulk \
+  -H 'Content-Type: application/json' \
+  -d '{ "items": [ { "id": 123, "meta": {
+      "schema": "{\"@context\":\"https://schema.org\",\"@type\":\"FAQPage\",\"mainEntity\":[]}",
+      "schema_mode": "add"
+  } } ] }'
+```
+
+- `schema` is a JSON-LD string: a full document (`{ "@context": ..., "@graph": [...] }`), a list of nodes, or a single node. Invalid JSON is rejected with `invalid_json_schema`.
+- `schema_mode`: `add` (default) merges your nodes into the page graph; `replace` makes your nodes the whole graph for that page.
+- An empty `schema` value clears it.
+
+Read it back with `GET /wp-json/seo-meta-bridge/v1/schema?id=123` (returns the decoded schema and its add/replace mode).
+
 ## MCP server (Claude Code / Claude Desktop)
 
 A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
@@ -134,6 +168,8 @@ A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
 - `list_posts` — find post IDs by search/post-type
 - `export_csv` — get all SEO meta as CSV
 - `import_csv` — apply CSV updates
+- `set_schema` - attach custom JSON-LD schema to a post (add or replace mode)
+- `get_schema` - read the custom JSON-LD schema stored on a post
 
 ### Install (Claude Desktop)
 

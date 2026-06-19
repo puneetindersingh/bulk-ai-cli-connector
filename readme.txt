@@ -2,8 +2,8 @@
 Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
-Tested up to: 6.9
-Stable tag: 1.5.1
+Tested up to: 7.0
+Stable tag: 1.6.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -27,6 +27,7 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 * **Auto-detection** — works with Yoast SEO or Rank Math, picks the active one automatically
 * **Per-post permission checks** — Contributors and Authors can only edit their own posts via the API, just like the wp-admin UI
 * **Allowlist enforcement** — only meta keys belonging to the active SEO plugin are accepted; arbitrary postmeta writes are rejected
+* **Custom JSON-LD schema** (v1.6.0+): store structured data (FAQPage, HowTo, Service, or any type) per post; it is injected into Yoast's or Rank Math's existing schema graph rather than as a duplicate block
 
 = REST endpoints =
 
@@ -37,6 +38,7 @@ All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-me
 * `POST /bulk-alts` — update image alt text on up to 200 media-library attachments by URL
 * `GET /export` — stream all posts' SEO meta as CSV
 * `POST /import` — apply updates from a CSV upload or JSON rows array
+* `GET /schema` (v1.6.0+): read back the custom JSON-LD schema stored on a post
 
 The standard WordPress REST route also works: `POST /wp/v2/posts/{id}` with a `meta` payload containing Yoast or Rank Math keys.
 
@@ -114,6 +116,14 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 1.6.0 =
+* New: custom JSON-LD schema per post or page. Store a block of structured data against any post and it is rendered inside the active SEO plugin's schema graph at output time (Yoast via the `wpseo_schema_graph` filter, Rank Math via `rank_math/json_ld`). The plugin emits no markup itself, so there is no extra output-escaping surface, and the nodes join the existing `@graph` instead of creating a second competing block (no duplicate-schema conflict).
+  * Write with the `schema` field on `/bulk` or `/import`, e.g. `{ id: 12, meta: { schema: "{...JSON-LD...}", schema_mode: "add" } }`. JSON is validated on write; invalid JSON is rejected with `invalid_json_schema`.
+  * `schema_mode`: `add` (default) merges your nodes into the graph; `replace` makes your nodes the whole graph for that page.
+  * Accepts a full document (`{ "@context": ..., "@graph": [...] }`), a bare list of nodes, or a single node object. Per-node `@context` is dropped so the SEO plugin sets one top-level context.
+  * New `GET /schema?id=123` reads back the stored schema and mode for a post.
+  * `/status` now reports `supports_schema: true`.
 
 = 1.5.1 =
 * Internal — renamed all internal PHP function and define prefixes from `seo_meta_bridge_*` / `SEO_META_BRIDGE_*` to `bulkseme_*` / `BULKSEME_*` so the prefix derives directly from the plugin slug. No public REST surface changes — endpoints still live at `/wp-json/seo-meta-bridge/v1/*`. No migration required.

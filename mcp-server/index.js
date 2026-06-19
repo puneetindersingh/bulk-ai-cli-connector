@@ -199,10 +199,34 @@ const tools = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'set_schema',
+    description: 'Attach custom JSON-LD structured data to a post or page (v1.6.0+). The schema is injected into the active SEO plugin\'s schema graph (Yoast via wpseo_schema_graph, Rank Math via rank_math/json_ld) at render time, so it joins the existing @graph instead of creating a duplicate block. Pass schema as a JSON string: a full document ({ "@context":..., "@graph":[...] }), a bare list of nodes, or a single node object. mode "add" (default) merges your nodes into the page graph; "replace" makes your schema the whole graph for that page. Pass an empty schema string to clear it. Invalid JSON is rejected.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id:     { type: 'integer', description: 'WordPress post or page ID' },
+        schema: { type: 'string', description: 'JSON-LD as a string. Empty string clears the stored schema.' },
+        mode:   { type: 'string', enum: ['add', 'replace'], default: 'add', description: 'add = merge into the page graph; replace = your schema becomes the whole graph for this page.' },
+      },
+      required: ['id', 'schema'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'get_schema',
+    description: 'Read back the custom JSON-LD schema and add/replace mode stored on a post by this plugin (v1.6.0+). Returns the decoded schema object, or null if none is set. Note: this returns only the schema this plugin stored, not the full rendered page graph (Yoast/Rank Math nodes plus yours). To audit the live graph, fetch the page HTML.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'integer', description: 'WordPress post or page ID' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.4.3' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.6.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -280,6 +304,15 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       case 'import_csv':
         result = await wp('/seo-meta-bridge/v1/import', { method: 'POST', body: { rows: args.rows } });
+        break;
+      case 'set_schema': {
+        const meta = { schema: args.schema };
+        if (args.mode) meta.schema_mode = args.mode;
+        result = await wp('/seo-meta-bridge/v1/bulk', { method: 'POST', body: { items: [{ id: args.id, meta }] } });
+        break;
+      }
+      case 'get_schema':
+        result = await wp(`/seo-meta-bridge/v1/schema?id=${encodeURIComponent(args.id)}`);
         break;
       default:
         throw new Error(`Unknown tool: ${name}`);
