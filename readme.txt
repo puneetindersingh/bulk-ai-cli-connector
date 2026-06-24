@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
 Tested up to: 7.0
-Stable tag: 1.6.0
+Stable tag: 1.6.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -116,6 +116,9 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 1.6.1 =
+* Fix: image alt updates now resolve far more image URLs to their media-library attachment. Previously the resolver only matched the exact stored file URL, so it missed the most common front-end forms and returned "not in media library" for images that were genuinely in the library. It now also resolves: size crops (foo-1024x683.jpg), the "-scaled" big-image original WordPress generates since 5.3 (whether the page references the scaled file or the plain original), cache-busting query strings, and images served from a CDN or alternate host that keep the /wp-content/uploads/ path. A safe filename fallback resolves year/month folder drift only when exactly one attachment owns that filename, so it never guesses between duplicates. Genuinely external or page-builder-hardcoded images (including most inline SVG icons) still report a clear "not an attachment" hint, since their alt lives in the builder, not the media library.
 
 = 1.6.0 =
 * New: custom JSON-LD schema per post or page. Store a block of structured data against any post and it is rendered inside the active SEO plugin's schema graph at output time (Yoast via the `wpseo_schema_graph` filter, Rank Math via `rank_math/json_ld`). The plugin emits no markup itself, so there is no extra output-escaping surface, and the nodes join the existing `@graph` instead of creating a second competing block (no duplicate-schema conflict).

@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.6.0
+ * Version: 1.6.1
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -21,7 +21,7 @@ if (!defined('BULKSEME_VERSION')) {
         define('BULKSEME_VERSION', $bulkseme_hdr['Version'] ?: '0.0.0');
         unset($bulkseme_hdr);
     } else {
-        define('BULKSEME_VERSION', '1.6.0');
+        define('BULKSEME_VERSION', '1.6.1');
     }
 }
 
@@ -866,6 +866,130 @@ add_filter('rank_math/json_ld', function ($data, $jsonld) {
     return $data;
 }, 99, 2);
 
+/**
+ * Resolve an image URL to a media-library attachment ID, tolerant of the
+ * URL forms WordPress actually serves on the front end.
+ *
+ * attachment_url_to_postid() only matches the exact `_wp_attached_file` URL.
+ * It misses, for almost every real content photo:
+ *   - size crops:        foo-1024x683.jpg, foo-300x200.jpg
+ *   - the -scaled big-image original WP stores since 5.3 (foo-scaled.jpg),
+ *     when the page references the un-scaled foo.jpg (or vice-versa)
+ *   - CDN / different-host URLs that keep the /wp-content/uploads/ path
+ *   - cache-busting query strings
+ *
+ * Strategy, cheapest first:
+ *   1. core resolver on the URL, then query-stripped, then size-stripped
+ *   2. exact `_wp_attached_file` match on the path reduced to its base file,
+ *      trying both the plain and the -scaled variant
+ *   3. unambiguous basename match (only when exactly one attachment owns it)
+ *
+ * @return array [int attachment_id (0 = not found), string matched_via]
+ */
+function bulkseme_resolve_attachment_id($url) {
+    $url = trim((string) $url);
+    if ($url === '') {
+        return [0, ''];
+    }
+
+    // ---- 1. core resolver, with query + size-suffix fallbacks --------------
+    $no_qs   = strtok($url, '?#');
+    $url_base = ($no_qs !== false && $no_qs !== '') ? $no_qs : $url;
+
+    $candidates_url = ['url_direct' => $url];
+    if ($url_base !== $url) {
+        $candidates_url['url_no_query'] = $url_base;
+    }
+    $stripped_size = preg_replace('#-\d+x\d+(\.[a-zA-Z0-9]+)$#', '$1', $url_base);
+    if ($stripped_size !== $url_base) {
+        $candidates_url['url_stripped_size'] = $stripped_size;
+    }
+    foreach ($candidates_url as $via => $u) {
+        $aid = attachment_url_to_postid($u);
+        if ($aid) {
+            return [(int) $aid, $via];
+        }
+    }
+
+    // ---- 2. meta match on the relative upload path -------------------------
+    // Derive the path after the uploads dir so CDN / alternate hosts that keep
+    // the /wp-content/uploads/<...> structure still resolve.
+    $uploads   = wp_get_upload_dir();
+    $base_path = wp_parse_url((string) ($uploads['baseurl'] ?? ''), PHP_URL_PATH); // /wp-content/uploads
+    $u_path    = wp_parse_url($url_base, PHP_URL_PATH);
+    $rel = '';
+    if ($base_path && $u_path && ($pos = strpos($u_path, $base_path)) !== false) {
+        $rel = ltrim(substr($u_path, $pos + strlen($base_path)), '/');
+    } elseif ($u_path && ($pos = strpos($u_path, '/uploads/')) !== false) {
+        // Fallback for custom uploads dirs / CDN rewrites that still say /uploads/.
+        $rel = ltrim(substr($u_path, $pos + strlen('/uploads/')), '/');
+    }
+    if ($rel === '') {
+        return [0, ''];
+    }
+
+    // Reduce to the base file: strip size crop, then strip -scaled.
+    $no_size = preg_replace('#-\d+x\d+(\.[a-zA-Z0-9]+)$#', '$1', $rel);
+    $base    = preg_replace('#-scaled(\.[a-zA-Z0-9]+)$#', '$1', $no_size);
+    $ext     = '';
+    if (preg_match('#(\.[a-zA-Z0-9]+)$#', $base, $m)) {
+        $ext = $m[1];
+    }
+    $base_noext = $ext !== '' ? substr($base, 0, -strlen($ext)) : $base;
+
+    // Exact match on _wp_attached_file against both the plain and the -scaled
+    // stored file. WP_Query keeps this on the object cache and out of raw SQL.
+    $path_candidates = array_values(array_unique(array_filter([
+        $base,                          // 2024/03/hero-team.jpg
+        $base_noext . '-scaled' . $ext, // 2024/03/hero-team-scaled.jpg
+        $rel,                           // the raw relative path, just in case
+    ])));
+    if ($path_candidates) {
+        $found = get_posts([
+            'post_type'              => 'attachment',
+            'post_status'            => 'inherit',
+            'posts_per_page'         => 1,
+            'fields'                 => 'ids',
+            'no_found_rows'          => true,
+            'update_post_term_cache' => false,
+            'meta_query'             => [[
+                'key'     => '_wp_attached_file',
+                'value'   => $path_candidates,
+                'compare' => 'IN',
+            ]],
+        ]);
+        if (!empty($found)) {
+            return [(int) $found[0], 'db_path_match'];
+        }
+    }
+
+    // ---- 3. unambiguous basename match -------------------------------------
+    // Last resort for year/month folder drift. Only trust it when exactly one
+    // attachment owns the filename, so we never guess between duplicates.
+    $basename       = basename($base);
+    $basename_noext = $ext !== '' ? substr($basename, 0, -strlen($ext)) : $basename;
+    if ($basename !== '') {
+        $found = get_posts([
+            'post_type'              => 'attachment',
+            'post_status'            => 'inherit',
+            'posts_per_page'         => 2,
+            'fields'                 => 'ids',
+            'no_found_rows'          => true,
+            'update_post_term_cache' => false,
+            'meta_query'             => [
+                'relation' => 'OR',
+                ['key' => '_wp_attached_file', 'value' => '/' . $basename, 'compare' => 'LIKE'],
+                ['key' => '_wp_attached_file', 'value' => '/' . $basename_noext . '-scaled' . $ext, 'compare' => 'LIKE'],
+            ],
+        ]);
+        if (count($found) === 1) {
+            return [(int) $found[0], 'db_filename_match'];
+        }
+    }
+
+    return [0, ''];
+}
+
 add_action('rest_api_init', function () {
 
     $perm = function () { return current_user_can('edit_posts'); };
@@ -1068,33 +1192,15 @@ add_action('rest_api_init', function () {
                     $clean = mb_substr($clean, 0, 250);
                 }
 
-                // Try the URL as-is first. attachment_url_to_postid handles the
-                // base URL but NOT size variants. If that misses, strip the
-                // -WIDTHxHEIGHT suffix and the file extension, then try again.
-                $aid = attachment_url_to_postid($url);
-                $matched_via = 'url_direct';
-                if (!$aid) {
-                    // Strip size suffix: foo-1024x768.webp -> foo.webp
-                    $stripped = preg_replace('#-\d+x\d+(\.[a-zA-Z0-9]+)$#', '$1', $url);
-                    if ($stripped && $stripped !== $url) {
-                        $aid = attachment_url_to_postid($stripped);
-                        if ($aid) $matched_via = 'url_stripped_size';
-                    }
-                }
-                if (!$aid) {
-                    // Last resort: strip any query string and re-try.
-                    $no_qs = strtok($url, '?');
-                    if ($no_qs && $no_qs !== $url) {
-                        $aid = attachment_url_to_postid($no_qs);
-                        if ($aid) $matched_via = 'url_no_query';
-                    }
-                }
+                // Resolve the URL to an attachment, tolerant of size crops,
+                // the -scaled big-image original, CDN hosts, and query strings.
+                list($aid, $matched_via) = bulkseme_resolve_attachment_id($url);
                 if (!$aid) {
                     $results[] = [
                         'image_url' => $url,
                         'status'    => 'skipped',
                         'errors'    => ['attachment_not_found'],
-                        'hint'      => 'URL did not resolve to an attachment in the media library. Image may be hot-linked from a CDN/external source, or hard-coded into a page-builder block.',
+                        'hint'      => 'URL did not resolve to an attachment in the media library. The image is likely hard-coded into a page-builder block or theme template (common for SVG icons and hero images), or hot-linked from an external/CDN source — its alt text lives in the page builder, not the media library.',
                     ];
                     continue;
                 }
