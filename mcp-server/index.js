@@ -226,7 +226,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.6.0' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.7.0' },
   { capabilities: { tools: {} } }
 );
 
@@ -273,8 +273,12 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         if (args.include_terms === true)     qs.set('include_terms', '1');
         if (args.include_archives === true)  qs.set('include_archives', '1');
         if (args.taxonomy)  qs.set('taxonomy', args.taxonomy);
-        const csv = await wp(`/seo-meta-bridge/v1/export?${qs.toString()}`);
-        result = { csv };
+        const data = await wp(`/seo-meta-bridge/v1/export?${qs.toString()}`);
+        // Plugin 1.7.0+ returns JSON { filename, row_count, csv }; older
+        // versions streamed the raw CSV body (with a UTF-8 BOM). Support both.
+        result = (data && typeof data === 'object' && typeof data.csv === 'string')
+          ? data
+          : { csv: String(data).replace(/^\uFEFF/, '') };
         break;
       }
       case 'list_terms': {

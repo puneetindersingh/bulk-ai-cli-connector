@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
 Tested up to: 7.0
-Stable tag: 1.6.1
+Stable tag: 1.7.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -36,7 +36,7 @@ All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-me
 * `GET /status` — detect the active SEO plugin and list available fields
 * `POST /bulk` — update SEO meta on up to 100 posts/terms in one call
 * `POST /bulk-alts` — update image alt text on up to 200 media-library attachments by URL
-* `GET /export` — stream all posts' SEO meta as CSV
+* `GET /export` — export all posts' SEO meta as CSV, returned in the JSON response body
 * `POST /import` — apply updates from a CSV upload or JSON rows array
 * `GET /schema` (v1.6.0+): read back the custom JSON-LD schema stored on a post
 
@@ -117,6 +117,10 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 1.7.0 =
+* Changed: `GET /export` now returns JSON in the shape `{ "filename", "row_count", "csv" }` instead of streaming raw CSV bytes. The `csv` field holds the complete CSV content; save it to a file to open in a spreadsheet. The plugin no longer produces any direct output, so every response flows through the REST API serializer. Query parameters and the CSV column shape are unchanged, and `/import` accepts the same CSV as before.
+* Upgraders: scripts that saved the old raw response body to a file should now read the `csv` field of the JSON response. The bundled MCP server 1.7.0 handles both shapes automatically.
+
 = 1.6.1 =
 * Fix: image alt updates now resolve far more image URLs to their media-library attachment. Previously the resolver only matched the exact stored file URL, so it missed the most common front-end forms and returned "not in media library" for images that were genuinely in the library. It now also resolves: size crops (foo-1024x683.jpg), the "-scaled" big-image original WordPress generates since 5.3 (whether the page references the scaled file or the plain original), cache-busting query strings, and images served from a CDN or alternate host that keep the /wp-content/uploads/ path. A safe filename fallback resolves year/month folder drift only when exactly one attachment owns that filename, so it never guesses between duplicates. Genuinely external or page-builder-hardcoded images (including most inline SVG icons) still report a clear "not an attachment" hint, since their alt lives in the builder, not the media library.
 
@@ -194,6 +198,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.7.0 =
+GET /export now returns JSON with a csv field instead of raw CSV bytes. Update any script that saved the raw response body; the bundled MCP server 1.7.0 handles both shapes.
 
 = 1.5.1 =
 Internal cleanup per WordPress.org review feedback. No public API changes; safe to upgrade.

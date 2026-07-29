@@ -111,10 +111,11 @@ Response: `{ "count": N, "results": [{ "id", "status", "errors": [...] }] }`
 
 ### `GET /wp-json/seo-meta-bridge/v1/export`
 
-Stream all posts' SEO meta as CSV (header row matches the `/import` shape).
+Export all posts' SEO meta as CSV (header row matches the `/import` shape). Since 1.7.0 the response is JSON: `{ "filename": "seo-meta-export.csv", "row_count": N, "csv": "..." }`. Save the `csv` field to a file:
 
-```
-GET /wp-json/seo-meta-bridge/v1/export?post_type=post,page&status=publish&limit=500&offset=0
+```bash
+curl -u 'user:app pass' 'https://site.com/wp-json/seo-meta-bridge/v1/export?post_type=post,page&status=publish&limit=500&offset=0' \
+  | jq -r .csv > export.csv
 ```
 
 ### `POST /wp-json/seo-meta-bridge/v1/import`

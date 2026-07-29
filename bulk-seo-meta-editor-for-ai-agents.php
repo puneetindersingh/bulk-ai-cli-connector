@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.6.1
+ * Version: 1.7.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -21,7 +21,7 @@ if (!defined('BULKSEME_VERSION')) {
         define('BULKSEME_VERSION', $bulkseme_hdr['Version'] ?: '0.0.0');
         unset($bulkseme_hdr);
     } else {
-        define('BULKSEME_VERSION', '1.6.1');
+        define('BULKSEME_VERSION', '1.7.0');
     }
 }
 
@@ -298,6 +298,10 @@ function bulkseme_term_set_value($term_id, $taxonomy, $meta_key, $value, $plugin
         return true;
     }
     if ($plugin === 'yoast') {
+        // 'wpseo_taxonomy_meta' is Yoast SEO's own option, not one this plugin
+        // defines or owns. Yoast keeps ALL term SEO meta in this single array
+        // option, so bridging a term update means read-modify-writing the
+        // exact key Yoast reads back.
         $opt = get_option('wpseo_taxonomy_meta', []);
         if (!isset($opt[$taxonomy]) || !is_array($opt[$taxonomy])) {
             $opt[$taxonomy] = [];
@@ -1254,10 +1258,11 @@ add_action('rest_api_init', function () {
     // -------- /export --------------------------------------------------------
     // GET /export?post_type=post,page&status=publish&limit=500&offset=0
     //           &include_terms=1&taxonomy=category,post_tag
-    // Streams CSV with id,url,post_type,status,post_title,plus the active
-    // plugin's SEO fields, plus trailing `kind` and `taxonomy` columns.
-    // Backwards compatible: v1.2.x clients that ignore the trailing columns
-    // see the same shape they had.
+    // Returns JSON { filename, row_count, csv } where `csv` holds the full
+    // CSV body: id,url,post_type,status,post_title, plus the active plugin's
+    // SEO fields, plus trailing `kind` and `taxonomy` columns. Clients save
+    // the `csv` string to a file themselves. (Since 1.7.0 the CSV is returned
+    // in the JSON body rather than streamed as raw bytes.)
     register_rest_route('seo-meta-bridge/v1', '/export', [
         'methods'             => 'GET',
         'permission_callback' => $perm,
@@ -1329,9 +1334,7 @@ add_action('rest_api_init', function () {
             $headers[] = 'kind';
             $headers[] = 'taxonomy';
 
-            // Pre-collect terms so the streamer doesn't need to query inside
-            // the response filter (keeps the filter side-effect-free apart
-            // from emitting bytes).
+            // Pre-collect term rows before assembling the CSV body.
             $term_rows = [];
             if ($include_terms && $term_active['plugin']) {
                 foreach ($taxonomies as $tax_name) {
@@ -1362,98 +1365,86 @@ add_action('rest_api_init', function () {
                 }
             }
 
-            // WP_REST_Response always JSON-encodes its body, so emit raw CSV
-            // bytes via rest_pre_serve_request and short-circuit serialization.
-            add_filter('rest_pre_serve_request', function ($served) use ($query, $active, $term_active, $archive_active, $headers, $include_lengths, $term_rows, $archive_rows, $field_aliases) {
-                if ($served) return $served;
-                if (!headers_sent()) {
-                    header('Content-Type: text/csv; charset=utf-8');
-                    header('Content-Disposition: attachment; filename="seo-meta-export.csv"');
+            // Assemble the CSV in memory and RETURN it inside the JSON response
+            // body. Nothing is echoed: REST clients read the `csv` field and
+            // save it to a file themselves. Cells are CSV-quoted (RFC 4180) by
+            // bulkseme_csv_line().
+            $csv       = bulkseme_csv_line($headers);
+            $row_count = 0;
+            foreach ($query->posts as $p) {
+                $row = [$p->ID, get_permalink($p->ID), $p->post_type, $p->post_status, $p->post_title];
+                foreach ($active['keys'] as $alias => $meta_key) {
+                    $val = get_post_meta($p->ID, $meta_key, true);
+                    if (is_array($val)) $val = implode('|', $val);
+                    $row[] = $val;
+                    if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
+                        $row[] = mb_strlen((string) $val);
+                    }
                 }
-                // Build CSV manually instead of fopen/fputcsv — Plugin Check
-                // flags raw filesystem calls, and php://output is the response
-                // stream so we just emit strings directly. CSV cells are
-                // already CSV-quoted by bulkseme_csv_line(); HTML-
-                // escaping (esc_html) would corrupt the CSV format, so we
-                // suppress the OutputNotEscaped check on these emit lines.
-                // UTF-8 BOM so Excel/LibreOffice auto-detect encoding and don't
-                // mangle curly quotes / em dashes into mojibake (â€™, â€").
-                // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- 3-byte UTF-8 BOM, no user data.
-                echo "\xEF\xBB\xBF";
-                // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
-                echo bulkseme_csv_line($headers);
-                foreach ($query->posts as $p) {
-                    $row = [$p->ID, get_permalink($p->ID), $p->post_type, $p->post_status, $p->post_title];
-                    foreach ($active['keys'] as $alias => $meta_key) {
-                        $val = get_post_meta($p->ID, $meta_key, true);
+                $row[] = 'post';  // kind
+                $row[] = '';      // taxonomy (n/a for posts)
+                $csv  .= bulkseme_csv_line($row);
+                $row_count++;
+            }
+            if ($term_active['plugin']) {
+                foreach ($term_rows as $tr) {
+                    $t   = $tr['term'];
+                    $tax = $tr['taxonomy'];
+                    $link = get_term_link($t);
+                    if (is_wp_error($link)) $link = '';
+                    $row = [$t->term_id, $link, '', '', $t->name];
+                    foreach ($term_active['keys'] as $alias => $meta_key) {
+                        $val = bulkseme_term_get_value($t->term_id, $tax, $meta_key, $term_active['plugin']);
                         if (is_array($val)) $val = implode('|', $val);
                         $row[] = $val;
                         if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
                             $row[] = mb_strlen((string) $val);
                         }
                     }
-                    $row[] = 'post';  // kind
-                    $row[] = '';      // taxonomy (n/a for posts)
-                    // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
-                    echo bulkseme_csv_line($row);
+                    $row[] = 'term';
+                    $row[] = $tax;
+                    $csv  .= bulkseme_csv_line($row);
+                    $row_count++;
                 }
-                if ($term_active['plugin']) {
-                    foreach ($term_rows as $tr) {
-                        $t   = $tr['term'];
-                        $tax = $tr['taxonomy'];
-                        $link = get_term_link($t);
-                        if (is_wp_error($link)) $link = '';
-                        $row = [$t->term_id, $link, '', '', $t->name];
-                        foreach ($term_active['keys'] as $alias => $meta_key) {
-                            $val = bulkseme_term_get_value($t->term_id, $tax, $meta_key, $term_active['plugin']);
+            }
+            if ($archive_active['plugin']) {
+                // CPT-archive rows: id=0, post_type=<cpt_slug>, kind='cpt_archive'.
+                // The "post_title" column carries the CPT label so the row is
+                // human-recognisable in spreadsheets. Field-alias columns are
+                // populated from each plugin's archive option storage.
+                foreach ($archive_rows as $ar) {
+                    $pt   = $ar['post_type'];
+                    $row  = [0, $ar['link'], $pt, '', $ar['label']];
+                    // Emit the SAME number of cells as $headers, matching the
+                    // post-row column shape. The column aliases were derived
+                    // from $active or $term_active (whichever exists) — archive
+                    // aliases overlap on title/description but may not cover
+                    // other fields. Map by alias name: if archive_active has
+                    // the alias, emit its value; else emit empty (preserves
+                    // CSV column count).
+                    foreach ($field_aliases as $alias) {
+                        $val = '';
+                        if (isset($archive_active['keys'][$alias])) {
+                            $val = bulkseme_archive_get_value($pt, $archive_active['keys'][$alias], $archive_active['plugin']);
                             if (is_array($val)) $val = implode('|', $val);
-                            $row[] = $val;
-                            if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
-                                $row[] = mb_strlen((string) $val);
-                            }
                         }
-                        $row[] = 'term';
-                        $row[] = $tax;
-                        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
-                        echo bulkseme_csv_line($row);
-                    }
-                }
-                if ($archive_active['plugin']) {
-                    // CPT-archive rows: id=0, post_type=<cpt_slug>, kind='cpt_archive'.
-                    // The "post_title" column carries the CPT label so the row is
-                    // human-recognisable in spreadsheets. Field-alias columns are
-                    // populated from each plugin's archive option storage.
-                    foreach ($archive_rows as $ar) {
-                        $pt   = $ar['post_type'];
-                        $row  = [0, $ar['link'], $pt, '', $ar['label']];
-                        // We need to emit the SAME number of cells as $headers,
-                        // matching the post-row column shape. The column aliases
-                        // were derived from $active or $term_active (whichever
-                        // exists) — archive aliases overlap on title/description
-                        // but may not cover other fields. Map by alias name:
-                        //   if archive_active has the alias → emit value;
-                        //   else → emit empty (preserves CSV column count).
-                        foreach ($field_aliases as $alias) {
-                            $val = '';
-                            if (isset($archive_active['keys'][$alias])) {
-                                $val = bulkseme_archive_get_value($pt, $archive_active['keys'][$alias], $archive_active['plugin']);
-                                if (is_array($val)) $val = implode('|', $val);
-                            }
-                            $row[] = $val;
-                            if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
-                                $row[] = mb_strlen((string) $val);
-                            }
+                        $row[] = $val;
+                        if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
+                            $row[] = mb_strlen((string) $val);
                         }
-                        $row[] = 'cpt_archive';
-                        $row[] = '';  // taxonomy column repurposed empty for archive rows
-                        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- CSV body, cells quoted by helper above.
-                        echo bulkseme_csv_line($row);
                     }
+                    $row[] = 'cpt_archive';
+                    $row[] = '';  // taxonomy column repurposed empty for archive rows
+                    $csv  .= bulkseme_csv_line($row);
+                    $row_count++;
                 }
-                return true;
-            });
+            }
 
-            return new WP_REST_Response(null, 200);
+            return new WP_REST_Response([
+                'filename'  => 'seo-meta-export.csv',
+                'row_count' => $row_count,
+                'csv'       => $csv,
+            ], 200);
         },
     ]);
 
