@@ -63,7 +63,7 @@ Also note: PHP's built-in dev server (`php -S`) does not handle WordPress URL re
 
 ## REST endpoints
 
-All endpoints require the user to have `edit_posts` capability. Per-post writes additionally check `edit_post` against the target post.
+All endpoints require the user to have `edit_posts` capability. That is only the outer gate: every write also checks a per-object capability. Post writes check `edit_post` against the target post, image alt writes check `edit_post` against the resolved attachment, term writes check the `edit_term` meta capability against the term, and CPT archive plus global-scope writes require `manage_options` because they change the SEO plugin's site-wide settings.
 
 ### `GET /wp-json/seo-meta-bridge/v1/status`
 
@@ -221,7 +221,7 @@ Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤
 ## Security model
 
 - Application Passwords transmit as Basic Auth — **HTTPS required**.
-- Per-post `edit_post` capability check on every write (not just `edit_posts`).
+- Per-object capability check on every write (not just `edit_posts`): `edit_post` for posts and attachments, `edit_term` for terms, `manage_options` for archive and global settings.
 - Meta keys are allowlisted to the active plugin's known fields — arbitrary postmeta writes are rejected.
 - URL-shaped fields are run through `esc_url_raw` before save.
 - No new admin UI; nothing to misconfigure.

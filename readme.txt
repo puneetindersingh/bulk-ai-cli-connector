@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
 Tested up to: 7.0
-Stable tag: 1.7.0
+Stable tag: 1.8.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -25,7 +25,7 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 * **CSV import / export** — round-trip your SEO meta through Excel or Google Sheets, posts and terms in one file
 * **MCP server** — bundled Node.js companion (`bulk-seo-meta-editor-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
 * **Auto-detection** — works with Yoast SEO or Rank Math, picks the active one automatically
-* **Per-post permission checks** — Contributors and Authors can only edit their own posts via the API, just like the wp-admin UI
+* **Per-object permission checks** — Contributors and Authors can only edit posts, media and terms they could edit in wp-admin; site-wide archive and global settings require an administrator
 * **Allowlist enforcement** — only meta keys belonging to the active SEO plugin are accepted; arbitrary postmeta writes are rejected
 * **Custom JSON-LD schema** (v1.6.0+): store structured data (FAQPage, HowTo, Service, or any type) per post; it is injected into Yoast's or Rank Math's existing schema graph rather than as a duplicate block
 
@@ -117,6 +117,11 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 1.8.0 =
+* Security: every bulk write now enforces a per-object capability check in addition to the route-level `edit_posts` gate. `POST /bulk-alts` checks `edit_post` on each resolved attachment, term updates check the `edit_term` meta capability on each term, and CPT archive updates now require `manage_options` (they change the SEO plugin's site-wide settings, the same bar the global scopes already had). Authors and Contributors can no longer touch objects they could not edit in wp-admin.
+* Changed: writes into Yoast SEO settings now go through Yoast's own public API instead of updating its stored options directly. Term meta is saved with `WPSEO_Taxonomy_Meta::set_values()` (merged with the term's current values so untouched fields are preserved) and archive/global titles with `WPSEO_Options::set()`, which routes each key to the right option group, validates it, and clears Yoast's caches. Rank Math ships no public setter for its title settings, so those writes still read-modify-write the option array Rank Math reads back, through a single documented helper.
+* Internal: the plugin version constant is now a plain define kept in sync with the plugin header, replacing the runtime header parse.
+
 = 1.7.0 =
 * Changed: `GET /export` now returns JSON in the shape `{ "filename", "row_count", "csv" }` instead of streaming raw CSV bytes. The `csv` field holds the complete CSV content; save it to a file to open in a spreadsheet. The plugin no longer produces any direct output, so every response flows through the REST API serializer. Query parameters and the CSV column shape are unchanged, and `/import` accepts the same CSV as before.
 * Upgraders: scripts that saved the old raw response body to a file should now read the `csv` field of the JSON response. The bundled MCP server 1.7.0 handles both shapes automatically.
@@ -198,6 +203,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.8.0 =
+Permission hardening: per-object capability checks on every bulk write, and CPT archive updates now require an administrator (manage_options). Update automation credentials if they relied on editor-level access to archive settings.
 
 = 1.7.0 =
 GET /export now returns JSON with a csv field instead of raw CSV bytes. Update any script that saved the raw response body; the bundled MCP server 1.7.0 handles both shapes.

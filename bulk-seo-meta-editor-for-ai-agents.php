@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.7.0
+ * Version: 1.8.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -12,18 +12,8 @@
 
 if (!defined('ABSPATH')) exit;
 
-// Read version from this file's own plugin header so /status can never drift
-// from the file's `Version:` line. Falls back to a literal if get_file_data
-// isn't loaded yet (early bootstrap path).
-if (!defined('BULKSEME_VERSION')) {
-    if (function_exists('get_file_data')) {
-        $bulkseme_hdr = get_file_data(__FILE__, ['Version' => 'Version'], 'plugin');
-        define('BULKSEME_VERSION', $bulkseme_hdr['Version'] ?: '0.0.0');
-        unset($bulkseme_hdr);
-    } else {
-        define('BULKSEME_VERSION', '1.7.0');
-    }
-}
+// Keep in sync with the `Version:` header line above on every release.
+define('BULKSEME_VERSION', '1.8.0');
 
 add_action('init', function () {
 
@@ -298,22 +288,25 @@ function bulkseme_term_set_value($term_id, $taxonomy, $meta_key, $value, $plugin
         return true;
     }
     if ($plugin === 'yoast') {
-        // 'wpseo_taxonomy_meta' is Yoast SEO's own option, not one this plugin
-        // defines or owns. Yoast keeps ALL term SEO meta in this single array
-        // option, so bridging a term update means read-modify-writing the
-        // exact key Yoast reads back.
-        $opt = get_option('wpseo_taxonomy_meta', []);
-        if (!isset($opt[$taxonomy]) || !is_array($opt[$taxonomy])) {
-            $opt[$taxonomy] = [];
+        // Term SEO meta is stored by Yoast SEO itself, so write it through
+        // Yoast's own public API (WPSEO_Taxonomy_Meta) instead of touching
+        // Yoast's storage directly. set_values() expects the FULL field set
+        // (it mirrors Yoast's admin form, which always posts every field and
+        // resets absent ones to defaults), so overlay our one change onto the
+        // term's current values first — that preserves every other field.
+        if (!class_exists('WPSEO_Taxonomy_Meta')) {
+            return false;
         }
-        if (!isset($opt[$taxonomy][$term_id]) || !is_array($opt[$taxonomy][$term_id])) {
-            $opt[$taxonomy][$term_id] = [];
+        $current = WPSEO_Taxonomy_Meta::get_term_meta((int) $term_id, $taxonomy);
+        if (!is_array($current)) {
+            $current = [];
         }
-        $opt[$taxonomy][$term_id][$meta_key] = $value;
-        update_option('wpseo_taxonomy_meta', $opt);
+        $current[$meta_key] = $value;
+        WPSEO_Taxonomy_Meta::set_values((int) $term_id, $taxonomy, $current);
         // Yoast 14+ caches rendered SEO meta in the yoast_indexable table.
-        // Updating wpseo_taxonomy_meta directly bypasses Yoast's hook chain,
-        // so the indexable stays stale and the FRONT-END keeps rendering the
+        // set_values() persists the meta but does not fire the term-save
+        // signals Yoast's own admin screen fires, so the indexable stays
+        // stale and the FRONT-END keeps rendering the
         // old meta description (verified on a real WP/Cloudflare site —
         // page cache cleared, but meta unchanged because Yoast served a
         // stale Indexable). Fire Yoast's own term-save signal so its
@@ -366,7 +359,10 @@ function bulkseme_apply_term_update($term_id, $taxonomy, $meta) {
     if (!$tax_obj) {
         return ['ok' => false, 'errors' => ['unknown_taxonomy']];
     }
-    if (!current_user_can($tax_obj->cap->edit_terms)) {
+    // Per-term permission: 'edit_term' is WordPress's per-object meta cap
+    // (it maps to the taxonomy's edit_terms cap by default, but lets
+    // map_meta_cap filters restrict individual terms).
+    if (!current_user_can('edit_term', $term->term_id)) {
         return ['ok' => false, 'errors' => ['forbidden']];
     }
     $active = bulkseme_active_term_keys();
@@ -443,7 +439,7 @@ function bulkseme_archive_get_value($post_type, $alias_or_key, $plugin) {
         return isset($opt[$key]) ? $opt[$key] : '';
     }
     if ($plugin === 'rankmath') {
-        $opt = get_option('rank-math-options-titles', []);
+        $opt = get_option(bulkseme_rankmath_titles_option(), []);
         $base = $alias_or_key;
         // Strip leading 'archive_' if user passed the full key.
         $base = preg_replace('/^archive_/', '', $base);
@@ -454,34 +450,58 @@ function bulkseme_archive_get_value($post_type, $alias_or_key, $plugin) {
 }
 
 /**
- * Write one archive-meta value via read-modify-write of the relevant
- * option array. Both Yoast and Rank Math keep all archive settings in a
- * single option, so we update the array and flush once per call.
+ * The option key Rank Math itself stores its title/archive settings under.
+ * This plugin does not define or own this option — Rank Math does. This
+ * plugin is a REST bridge INTO Rank Math, and Rank Math (unlike Yoast, which
+ * exposes WPSEO_Options::set()) ships no public setter for these settings,
+ * so bridging a write means read-modify-writing the exact option Rank Math
+ * reads back. Everything this plugin creates itself is bulkseme_-prefixed.
  */
-function bulkseme_archive_set_value($post_type, $meta_key, $value, $plugin) {
-    // Note: 'wpseo_titles' and 'rank-math-options-titles' are NOT options this
-    // plugin defines or owns. They are the option keys those plugins (Yoast
-    // SEO and Rank Math respectively) use internally for archive/CPT title
-    // settings. We integrate WITH those plugins by reading and updating the
-    // exact keys they expect — using a custom-prefixed option here would
-    // store data nowhere those plugins look, defeating the bridge's purpose.
+function bulkseme_rankmath_titles_option() {
+    return 'rank-math-options-titles';
+}
+
+/**
+ * Write one key into the active SEO plugin's title-settings storage.
+ * Yoast: via its public options API (WPSEO_Options::set() routes the key to
+ * the right option group, validates it, and clears Yoast's own caches).
+ * Rank Math: read-modify-write of its titles option (no public setter, see
+ * bulkseme_rankmath_titles_option()).
+ */
+function bulkseme_titles_set($plugin, $key, $value) {
     if ($plugin === 'yoast') {
-        $opt = get_option('wpseo_titles', []);
-        // meta_key is the Yoast alias ('title-ptarchive'); append the ptype.
-        $key = $meta_key . '-' . $post_type;
-        $opt[$key] = $value;
-        update_option('wpseo_titles', $opt);
+        if (!class_exists('WPSEO_Options')) {
+            return false;
+        }
+        WPSEO_Options::set($key, $value);
         return true;
     }
     if ($plugin === 'rankmath') {
-        $opt = get_option('rank-math-options-titles', []);
+        $option_name = bulkseme_rankmath_titles_option();
+        $opt = get_option($option_name, []);
+        if (!is_array($opt)) {
+            $opt = [];
+        }
+        $opt[$key] = $value;
+        update_option($option_name, $opt);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Write one archive-meta value into the active SEO plugin's title settings.
+ */
+function bulkseme_archive_set_value($post_type, $meta_key, $value, $plugin) {
+    if ($plugin === 'yoast') {
+        // meta_key is the Yoast alias ('title-ptarchive'); append the ptype.
+        return bulkseme_titles_set('yoast', $meta_key . '-' . $post_type, $value);
+    }
+    if ($plugin === 'rankmath') {
         // meta_key is the Rank Math alias ('archive_title'); wrap with
         // pt_{ptype}_ prefix so we hit the right field for this CPT.
         $base = preg_replace('/^archive_/', '', $meta_key);
-        $key  = 'pt_' . $post_type . '_archive_' . $base;
-        $opt[$key] = $value;
-        update_option('rank-math-options-titles', $opt);
-        return true;
+        return bulkseme_titles_set('rankmath', 'pt_' . $post_type . '_archive_' . $base, $value);
     }
     return false;
 }
@@ -579,7 +599,7 @@ function bulkseme_global_get_value($scope, $alias_or_key, $plugin) {
     $active = bulkseme_global_active_keys($scope);
     if (!$active['plugin']) return '';
     $key = isset($active['keys'][$alias_or_key]) ? $active['keys'][$alias_or_key] : $alias_or_key;
-    $opt = $plugin === 'yoast' ? get_option('wpseo_titles', []) : get_option('rank-math-options-titles', []);
+    $opt = $plugin === 'yoast' ? get_option('wpseo_titles', []) : get_option(bulkseme_rankmath_titles_option(), []);
     return isset($opt[$key]) ? $opt[$key] : '';
 }
 
@@ -603,11 +623,8 @@ function bulkseme_apply_global_update($scope, $meta) {
     }
     $alias_to_meta = $active['keys'];
     $allowed       = array_values($alias_to_meta);
-    $option_name   = $active['plugin'] === 'yoast' ? 'wpseo_titles' : 'rank-math-options-titles';
-    $opt           = get_option($option_name, []);
 
     $errors = [];
-    $changed = false;
     foreach ($meta as $key => $value) {
         if (isset($alias_to_meta[$key])) {
             $key = $alias_to_meta[$key];
@@ -619,11 +636,9 @@ function bulkseme_apply_global_update($scope, $meta) {
         if (is_string($value)) {
             $value = sanitize_text_field($value);
         }
-        $opt[$key] = $value;
-        $changed = true;
-    }
-    if ($changed) {
-        update_option($option_name, $opt);
+        if (!bulkseme_titles_set($active['plugin'], $key, $value)) {
+            $errors[] = "write_failed:$key";
+        }
     }
     return ['ok' => empty($errors), 'errors' => $errors];
 }
@@ -631,8 +646,9 @@ function bulkseme_apply_global_update($scope, $meta) {
 /**
  * Apply a meta update to one CPT archive page. Mirrors the post + term
  * update helpers but writes into the SEO plugin's options-array storage.
- * Permission: requires the post type's edit_posts cap (or the generic
- * edit_posts cap if the CPT has no custom cap_type).
+ * Permission: manage_options (admin-only). Archive titles/descriptions live
+ * in the SEO plugin's site-wide settings, not on an individual post, so
+ * editing them is a site-settings change — same bar as the global scopes.
  */
 function bulkseme_apply_archive_update($post_type, $meta) {
     if (!post_type_exists($post_type)) {
@@ -642,8 +658,7 @@ function bulkseme_apply_archive_update($post_type, $meta) {
     if (!$pt || empty($pt->has_archive)) {
         return ['ok' => false, 'errors' => ['post_type_has_no_archive']];
     }
-    $cap = isset($pt->cap->edit_posts) ? $pt->cap->edit_posts : 'edit_posts';
-    if (!current_user_can($cap)) {
+    if (!current_user_can('manage_options')) {
         return ['ok' => false, 'errors' => ['forbidden']];
     }
     $active = bulkseme_active_archive_keys();
@@ -996,6 +1011,12 @@ function bulkseme_resolve_attachment_id($url) {
 
 add_action('rest_api_init', function () {
 
+    // Route-level gate: every route requires an authenticated user with at
+    // least edit_posts. This is only the outer door — each handler enforces
+    // object-level caps again per item (edit_post for posts/attachments,
+    // edit_term for terms, manage_options for site-wide archive/global
+    // settings), because bulk payloads mix objects the caller may and may
+    // not be allowed to touch.
     $perm = function () { return current_user_can('edit_posts'); };
 
     // -------- /status --------------------------------------------------------
@@ -1205,6 +1226,21 @@ add_action('rest_api_init', function () {
                         'status'    => 'skipped',
                         'errors'    => ['attachment_not_found'],
                         'hint'      => 'URL did not resolve to an attachment in the media library. The image is likely hard-coded into a page-builder block or theme template (common for SVG icons and hero images), or hot-linked from an external/CDN source — its alt text lives in the page builder, not the media library.',
+                    ];
+                    continue;
+                }
+
+                // Per-attachment permission: the route-level edit_posts check
+                // grants access to the endpoint, but each write must also pass
+                // edit_post for THIS attachment — so Authors/Contributors can
+                // only touch alt text on media they are allowed to edit,
+                // matching the wp-admin media library rules.
+                if (!current_user_can('edit_post', $aid)) {
+                    $results[] = [
+                        'image_url'     => $url,
+                        'status'        => 'error',
+                        'errors'        => ['forbidden'],
+                        'attachment_id' => $aid,
                     ];
                     continue;
                 }
