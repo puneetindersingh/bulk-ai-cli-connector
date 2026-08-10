@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: ai, seo, rest-api, mcp, headless
 Requires at least: 5.6
 Tested up to: 7.0
-Stable tag: 1.8.0
+Stable tag: 1.8.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -117,6 +117,10 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 1.8.1 =
+* Security: `GET /export` now capability-filters every row it returns, using the same capability the matching write path enforces. Term rows require the `edit_term` meta capability on each term, so taxonomies registered with their own capabilities are respected. CPT archive rows require `manage_options`, matching the archive write path, because those values live in the SEO plugin's site-wide settings rather than on an object. Post rows are checked with `edit_post` per post instead of relying on the `edit_others_posts` pre-filter, which covers only the core post capabilities and not custom post types that declare their own `capability_type`. Rows the caller cannot manage are omitted, so `/export` no longer returns SEO metadata for objects the caller could not open in wp-admin.
+* Note: a caller who could previously export taxonomy terms or CPT archive settings without holding the matching capability will now receive fewer rows. Administrators, and Editors acting within their own capabilities, see no change. `row_count` still reports the number of rows actually emitted.
+
 = 1.8.0 =
 * Security: every bulk write now enforces a per-object capability check in addition to the route-level `edit_posts` gate. `POST /bulk-alts` checks `edit_post` on each resolved attachment, term updates check the `edit_term` meta capability on each term, and CPT archive updates now require `manage_options` (they change the SEO plugin's site-wide settings, the same bar the global scopes already had). Authors and Contributors can no longer touch objects they could not edit in wp-admin.
 * Changed: writes into Yoast SEO settings now go through Yoast's own public API instead of updating its stored options directly. Term meta is saved with `WPSEO_Taxonomy_Meta::set_values()` (merged with the term's current values so untouched fields are preserved) and archive/global titles with `WPSEO_Options::set()`, which routes each key to the right option group, validates it, and clears Yoast's caches. Rank Math ships no public setter for its title settings, so those writes still read-modify-write the option array Rank Math reads back, through a single documented helper.
@@ -203,6 +207,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.8.1 =
+Permission fix: GET /export now filters its rows by capability, so terms need edit_term, CPT archive settings need manage_options, and posts are checked with edit_post per post. Automation that exported terms or archive settings on a low-privilege account will get fewer rows.
 
 = 1.8.0 =
 Permission hardening: per-object capability checks on every bulk write, and CPT archive updates now require an administrator (manage_options). Update automation credentials if they relied on editor-level access to archive settings.

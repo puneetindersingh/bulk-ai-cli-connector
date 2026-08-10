@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.8.0
+ * Version: 1.8.1
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -13,7 +13,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Keep in sync with the `Version:` header line above on every release.
-define('BULKSEME_VERSION', '1.8.0');
+define('BULKSEME_VERSION', '1.8.1');
 
 add_action('init', function () {
 
@@ -1299,6 +1299,13 @@ add_action('rest_api_init', function () {
     // SEO fields, plus trailing `kind` and `taxonomy` columns. Clients save
     // the `csv` string to a file themselves. (Since 1.7.0 the CSV is returned
     // in the JSON body rather than streamed as raw bytes.)
+    //
+    // Every row is capability-filtered before it is written into the CSV, using
+    // the same cap the corresponding write path enforces: edit_post per post,
+    // edit_term per term, manage_options for CPT-archive settings. Rows the
+    // caller may not manage are omitted rather than erroring, so a partially
+    // privileged caller still gets a valid CSV of exactly what they may edit,
+    // and `row_count` reports what was actually emitted.
     register_rest_route('seo-meta-bridge/v1', '/export', [
         'methods'             => 'GET',
         'permission_callback' => $perm,
@@ -1330,12 +1337,9 @@ add_action('rest_api_init', function () {
             // Author scoping for /export. When the caller lacks edit_others_posts
             // (i.e. Author / Contributor roles), restrict the query to posts they
             // own — mirrors the wp-admin Posts list, which hides other users'
-            // drafts from these roles. Without this filter, a low-privilege user
-            // with an app password could call /export?status=draft and read
-            // titles + SEO meta of every draft on the site, including ones they
-            // were never supposed to see in admin. Editors and Administrators
-            // (which have edit_others_posts) see everything as before — no
-            // behaviour change for normal /export consumers.
+            // drafts from these roles. This is only a cheap pre-filter so we do
+            // not load rows we are about to discard; the authoritative gate is
+            // the per-post edit_post check applied to every emitted row below.
             $query_args = [
                 'post_type'      => $post_types,
                 'post_status'    => array_map('trim', explode(',', $status)),
@@ -1371,10 +1375,22 @@ add_action('rest_api_init', function () {
             $headers[] = 'taxonomy';
 
             // Pre-collect term rows before assembling the CSV body.
+            //
+            // Term rows carry the same SEO fields the /bulk and /import writers
+            // gate behind the per-term edit_term meta cap, so reading them is
+            // gated identically. A taxonomy registered with its own capabilities
+            // (edit_terms => manage_woocommerce, a membership plugin's own cap,
+            // etc.) is therefore respected here too: a caller who only holds
+            // edit_posts gets no term rows at all, exactly as wp-admin shows
+            // them no taxonomy screens.
             $term_rows = [];
             if ($include_terms && $term_active['plugin']) {
                 foreach ($taxonomies as $tax_name) {
                     if (!taxonomy_exists($tax_name)) continue;
+                    // Taxonomy-level pre-filter: skip the get_terms() query
+                    // entirely when the caller cannot manage this taxonomy.
+                    $tax_obj = get_taxonomy($tax_name);
+                    if (!$tax_obj || !current_user_can($tax_obj->cap->edit_terms)) continue;
                     $terms = get_terms([
                         'taxonomy'   => $tax_name,
                         'hide_empty' => false,
@@ -1382,6 +1398,11 @@ add_action('rest_api_init', function () {
                     ]);
                     if (is_wp_error($terms)) continue;
                     foreach ($terms as $t) {
+                        // Authoritative per-term gate. edit_term is the meta cap
+                        // map_meta_cap resolves against the individual term, so
+                        // a map_meta_cap filter that restricts single terms is
+                        // honoured rather than bypassed by the taxonomy check.
+                        if (!current_user_can('edit_term', $t->term_id)) continue;
                         $term_rows[] = ['term' => $t, 'taxonomy' => $tax_name];
                     }
                 }
@@ -1390,9 +1411,17 @@ add_action('rest_api_init', function () {
             // CPT archives — synthetic rows for each public CPT with has_archive=true.
             // post_type column carries the CPT slug; id stays 0 (archives have no
             // row ID); kind=cpt_archive flags the row for round-trip dispatch.
+            //
+            // CPT-archive SEO values are not per-object meta: they live in the
+            // SEO plugin's site-wide settings option (wpseo_titles /
+            // rank-math-options-titles), and wp-admin only exposes them on the
+            // SEO plugin's settings screens, which are administrator-only.
+            // bulkseme_apply_archive_update() already requires manage_options to
+            // write them, so reading them requires the same cap — otherwise any
+            // Author could read back site settings they can neither see nor edit.
             $archive_active = bulkseme_active_archive_keys();
             $archive_rows = [];
-            if ($include_archives && $archive_active['plugin']) {
+            if ($include_archives && $archive_active['plugin'] && current_user_can('manage_options')) {
                 foreach (get_post_types(['public' => true, 'has_archive' => true], 'objects') as $pt_obj) {
                     if (empty($pt_obj->has_archive)) continue;
                     $link = get_post_type_archive_link($pt_obj->name);
@@ -1408,10 +1437,24 @@ add_action('rest_api_init', function () {
             $csv       = bulkseme_csv_line($headers);
             $row_count = 0;
             foreach ($query->posts as $p) {
+                // Authoritative per-post read gate, matching the edit_post check
+                // bulkseme_apply_update() enforces on the write side. The author
+                // pre-filter above tests edit_others_posts, which is the core
+                // 'post' capability only — a CPT registered with its own
+                // capability_type can deny a user who passes it. edit_post is the
+                // meta cap that resolves ownership, post status and per-type caps
+                // together, so it is the check every emitted row must pass.
+                if (!current_user_can('edit_post', $p->ID)) continue;
                 $row = [$p->ID, get_permalink($p->ID), $p->post_type, $p->post_status, $p->post_title];
-                foreach ($active['keys'] as $alias => $meta_key) {
-                    $val = get_post_meta($p->ID, $meta_key, true);
-                    if (is_array($val)) $val = implode('|', $val);
+                // Walk $field_aliases, not $active['keys'], so the cells stay
+                // positionally aligned with $headers even when the header set
+                // was derived from a different scope's alias list.
+                foreach ($field_aliases as $alias) {
+                    $val = '';
+                    if (isset($active['keys'][$alias])) {
+                        $val = get_post_meta($p->ID, $active['keys'][$alias], true);
+                        if (is_array($val)) $val = implode('|', $val);
+                    }
                     $row[] = $val;
                     if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
                         $row[] = mb_strlen((string) $val);
@@ -1429,9 +1472,19 @@ add_action('rest_api_init', function () {
                     $link = get_term_link($t);
                     if (is_wp_error($link)) $link = '';
                     $row = [$t->term_id, $link, '', '', $t->name];
-                    foreach ($term_active['keys'] as $alias => $meta_key) {
-                        $val = bulkseme_term_get_value($t->term_id, $tax, $meta_key, $term_active['plugin']);
-                        if (is_array($val)) $val = implode('|', $val);
+                    // Emit one cell per header alias. The term field set is not
+                    // identical to the post field set (Yoast, for instance, has
+                    // no per-term 'nofollow'), so iterating the term keys
+                    // directly produced a short row: every value after the
+                    // missing alias landed under the wrong header, and /import
+                    // then discarded the row for having the wrong cell count.
+                    // Aliases the term scope does not support emit empty.
+                    foreach ($field_aliases as $alias) {
+                        $val = '';
+                        if (isset($term_active['keys'][$alias])) {
+                            $val = bulkseme_term_get_value($t->term_id, $tax, $term_active['keys'][$alias], $term_active['plugin']);
+                            if (is_array($val)) $val = implode('|', $val);
+                        }
                         $row[] = $val;
                         if ($include_lengths && ($alias === 'title' || $alias === 'description')) {
                             $row[] = mb_strlen((string) $val);
