@@ -1,6 +1,17 @@
 # Bulk SEO Meta Editor for AI Agents
 
-A WordPress plugin that lets AI agents (Claude, GPT, Perplexity) and scripts bulk-update **Yoast SEO** or **Rank Math** meta tags via the WordPress REST API. Auto-detects which SEO plugin is active.
+[![WordPress Plugin Version](https://img.shields.io/wordpress/plugin/v/bulk-seo-meta-editor-for-ai-agents?logo=wordpress&color=9B51E0)](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)
+[![WordPress Plugin Downloads](https://img.shields.io/wordpress/plugin/dt/bulk-seo-meta-editor-for-ai-agents?color=9B51E0)](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)
+[![Tested WP Version](https://img.shields.io/wordpress/plugin/tested/bulk-seo-meta-editor-for-ai-agents?color=9B51E0)](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)
+[![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-FF7F50)](LICENSE)
+[![npm](https://img.shields.io/npm/v/bulk-seo-meta-editor-mcp?logo=npm&color=FF7F50&label=MCP%20server)](https://www.npmjs.com/package/bulk-seo-meta-editor-mcp)
+
+**Bulk edit Yoast SEO and Rank Math meta over the WordPress REST API.** A free, GPL-2.0 WordPress plugin that
+exposes SEO titles, meta descriptions, canonicals, robots directives, Open Graph and Twitter fields, image alt
+text and custom JSON-LD schema to AI agents (Claude, GPT, Perplexity), automation tools (n8n, Zapier, Make) and
+your own scripts. Auto-detects whichever SEO plugin is active.
+
+Available in the official directory: **[wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)**
 
 Includes:
 
@@ -22,21 +33,26 @@ WordPress doesn't expose Yoast or Rank Math meta fields via the REST API by defa
 
 ## Installation
 
-### Option 1 — WordPress admin (zip upload)
+### Option 1: WordPress.org directory (recommended)
 
-1. Download `bulk-seo-meta-editor-for-ai-agents.zip` from [Releases](https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/releases)
-2. WP admin → **Plugins → Add New → Upload Plugin**
+WP admin, **Plugins → Add New**, search for **Bulk SEO Meta Editor for AI Agents**, then Install and Activate.
+Updates then arrive through the normal WordPress update channel.
+
+### Option 2: WP-CLI
+
+```
+wp plugin install bulk-seo-meta-editor-for-ai-agents --activate
+```
+
+### Option 3: zip upload
+
+1. Download the zip from [WordPress.org](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/) or from [Releases](https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/releases)
+2. WP admin, **Plugins → Add New → Upload Plugin**
 3. Activate
 
-### Option 2 — must-use plugin (auto-active, recommended for agencies)
+### Option 4: must-use plugin (auto-active, for agency fleets)
 
-Drop `bulk-seo-meta-editor-for-ai-agents.php` into `wp-content/mu-plugins/`. No activation required, can't be turned off from the admin.
-
-### Option 3 — Composer
-
-```
-composer require puneetindersingh/bulk-seo-meta-editor-for-ai-agents
-```
+Drop `bulk-seo-meta-editor-for-ai-agents.php` into `wp-content/mu-plugins/`. No activation required and it cannot be switched off from the admin.
 
 ## Authentication
 
@@ -54,12 +70,12 @@ WordPress disables Application Passwords on non-HTTPS sites by default, so you'l
 
 ```php
 <?php
-// LOCAL DEV ONLY — never ship this to production
+// LOCAL DEV ONLY. Never ship this to production.
 add_filter('wp_is_application_passwords_available', '__return_true');
 add_filter('wp_is_application_passwords_available_for_user', '__return_true');
 ```
 
-Also note: PHP's built-in dev server (`php -S`) does not handle WordPress URL rewriting, so `/wp-json/...` URLs return the front-page HTML on a local install. Use the `?rest_route=/...` form instead — it works on every WP install regardless of permalink structure or web server. The bundled MCP server already uses that form.
+Also note: PHP's built-in dev server (`php -S`) does not handle WordPress URL rewriting, so `/wp-json/...` URLs return the front-page HTML on a local install. Use the `?rest_route=/...` form instead, it works on every WP install regardless of permalink structure or web server. The bundled MCP server already uses that form.
 
 ## REST endpoints
 
@@ -107,7 +123,7 @@ Response: `{ "count": N, "results": [{ "id", "status", "errors": [...] }] }`
 
 **Partial-success semantics:** within a single item, valid meta keys are applied even when other keys in the same payload are rejected. The item's `status` is `error` if any key was rejected; the `errors` array names which ones. Use it to detect typos without re-sending the whole batch. Example: a payload with `_yoast_wpseo_title` (valid) and `_arbitrary_key` (rejected) updates the title and reports `errors: ["unknown_or_disallowed_key:_arbitrary_key"]`.
 
-**Allowlist:** only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Arbitrary postmeta writes are rejected — this endpoint cannot be used as a generic postmeta editor.
+**Allowlist:** only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Arbitrary postmeta writes are rejected, this endpoint cannot be used as a generic postmeta editor.
 
 ### `GET /wp-json/seo-meta-bridge/v1/export`
 
@@ -162,13 +178,16 @@ Read it back with `GET /wp-json/seo-meta-bridge/v1/schema?id=123` (returns the d
 
 A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
 
-- `status` — detect active SEO plugin
-- `get_post_meta` — read SEO meta for one post
-- `set_post_meta` — update one post
-- `bulk_update` — update up to 100 posts
-- `list_posts` — find post IDs by search/post-type
-- `export_csv` — get all SEO meta as CSV
-- `import_csv` — apply CSV updates
+- `status`: detect the active SEO plugin and list available field aliases
+- `get_post_meta`: read SEO meta for one post
+- `set_post_meta`: update one post
+- `bulk_update`: update up to 100 posts or terms in one call
+- `list_posts`: find post IDs by search or post type
+- `list_terms`: find term IDs by taxonomy or search
+- `export_csv`: pull all SEO meta as CSV
+- `import_csv`: apply CSV updates
+- `set_schema`: store custom JSON-LD against a post
+- `get_schema`: read back the stored JSON-LD
 - `set_schema` - attach custom JSON-LD schema to a post (add or replace mode)
 - `get_schema` - read the custom JSON-LD schema stored on a post
 
@@ -220,9 +239,9 @@ Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤
 
 ## Security model
 
-- Application Passwords transmit as Basic Auth — **HTTPS required**.
+- Application Passwords transmit as Basic Auth, so **HTTPS is required**.
 - Per-object capability check on every write (not just `edit_posts`): `edit_post` for posts and attachments, `edit_term` for terms, `manage_options` for archive and global settings.
-- Meta keys are allowlisted to the active plugin's known fields — arbitrary postmeta writes are rejected.
+- Meta keys are allowlisted to the active plugin's known fields. Arbitrary postmeta writes are rejected.
 - URL-shaped fields are run through `esc_url_raw` before save.
 - No new admin UI; nothing to misconfigure.
 
@@ -259,9 +278,9 @@ The bundled MCP server does this automatically (v1.4.2+). Override the UA with `
 | Status | Likely cause |
 |---|---|
 | `401 Unauthorized` from any endpoint | Wrong username, wrong/revoked Application Password, or HTTPS not enabled (App Passwords are HTTPS-only by default) |
-| `403 Forbidden` (HTML body) from REST endpoints, but admin login works | WAF blocking by User-Agent — see above |
+| `403 Forbidden` (HTML body) from REST endpoints, but admin login works | WAF blocking by User-Agent, see above |
 | `404 rest_no_route` from `/seo-meta-bridge/v1/...` | Plugin not installed/active on this site (or this subsite, on multisite) |
-| Front-end shows old meta after a successful `/bulk` write | Page cache (LiteSpeed, WP Rocket, Cloudflare APO) — purge the URL. Yoast indexable cache is auto-flushed by v1.4.1+ |
+| Front-end shows old meta after a successful `/bulk` write | Page cache (LiteSpeed, WP Rocket, Cloudflare APO), purge the URL. Yoast indexable cache is auto-flushed by v1.4.1+ |
 
 ## License
 

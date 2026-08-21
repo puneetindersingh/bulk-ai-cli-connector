@@ -1,6 +1,6 @@
 === Bulk SEO Meta Editor for AI Agents ===
 Contributors: puneetindersingh
-Tags: ai, seo, rest-api, mcp, headless
+Tags: yoast, rank-math, bulk-edit, meta-description, mcp
 Requires at least: 5.6
 Tested up to: 7.0
 Stable tag: 1.8.1
@@ -8,36 +8,36 @@ Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Bulk-update Yoast SEO or Rank Math meta tags AND media-library image alt text via REST API. For AI agents and automation scripts.
+Bulk edit Yoast SEO and Rank Math meta titles, descriptions and image alt text over the REST API. For AI agents, n8n and scripts.
 
 == Description ==
 
-WordPress doesn't expose Yoast SEO or Rank Math meta fields via the REST API by default. This plugin adds a clean, authenticated REST surface so AI agents (Claude, ChatGPT, Perplexity), automation tools (n8n, Zapier, Make), and headless CMS workflows can read and update SEO titles, descriptions, canonical URLs, robots directives, OG and Twitter fields with a single HTTP call.
+Bulk edit Yoast SEO or Rank Math meta from outside wp-admin. WordPress does not expose those fields over the REST API, so editing a meta title programmatically normally means WP-CLI, a custom plugin, or a premium SEO tier. This plugin adds a clean, authenticated REST surface instead, so AI agents (Claude, ChatGPT, Perplexity), automation tools (n8n, Zapier, Make) and headless workflows can read and rewrite SEO titles, meta descriptions, canonical URLs, robots directives, Open Graph and Twitter fields on up to 100 posts in a single HTTP call.
 
 Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases (`title`, `description`, `focus_kw`, ...) so you don't need to memorise Yoast vs Rank Math meta keys.
 
 = What's included =
 
-* **REST endpoints** — read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route or the namespaced helpers
-* **Taxonomy term archives** — edit SEO meta on category/tag/custom-taxonomy archive pages too, not just posts (Yoast and Rank Math both supported)
-* **Bulk update** — apply changes to up to 100 posts or terms in a single call
-* **Bulk image alt text** — update `_wp_attachment_image_alt` on up to 200 media-library attachments per call by image URL. Resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment automatically (v1.5.0+)
-* **CSV import / export** — round-trip your SEO meta through Excel or Google Sheets, posts and terms in one file
-* **MCP server** — bundled Node.js companion (`bulk-seo-meta-editor-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
-* **Auto-detection** — works with Yoast SEO or Rank Math, picks the active one automatically
-* **Per-object permission checks** — Contributors and Authors can only edit posts, media and terms they could edit in wp-admin; site-wide archive and global settings require an administrator
-* **Allowlist enforcement** — only meta keys belonging to the active SEO plugin are accepted; arbitrary postmeta writes are rejected
+* **REST endpoints**: read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route or the namespaced helpers
+* **Taxonomy term archives**: edit SEO meta on category/tag/custom-taxonomy archive pages too, not just posts (Yoast and Rank Math both supported)
+* **Bulk update**: apply changes to up to 100 posts or terms in a single call
+* **Bulk image alt text**: update `_wp_attachment_image_alt` on up to 200 media-library attachments per call by image URL. Resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment automatically (v1.5.0+)
+* **CSV import / export**: round-trip your SEO meta through Excel or Google Sheets, posts and terms in one file
+* **MCP server**: bundled Node.js companion (`bulk-seo-meta-editor-mcp` on npm) so Claude Desktop and Claude Code can drive the plugin natively
+* **Auto-detection**: works with Yoast SEO or Rank Math, picks the active one automatically
+* **Per-object permission checks**: Contributors and Authors can only edit posts, media and terms they could edit in wp-admin; site-wide archive and global settings require an administrator
+* **Allowlist enforcement**: only meta keys belonging to the active SEO plugin are accepted; arbitrary postmeta writes are rejected
 * **Custom JSON-LD schema** (v1.6.0+): store structured data (FAQPage, HowTo, Service, or any type) per post; it is injected into Yoast's or Rank Math's existing schema graph rather than as a duplicate block
 
 = REST endpoints =
 
 All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-meta-bridge/v1/...` on plain-permalink installs):
 
-* `GET /status` — detect the active SEO plugin and list available fields
-* `POST /bulk` — update SEO meta on up to 100 posts/terms in one call
-* `POST /bulk-alts` — update image alt text on up to 200 media-library attachments by URL
-* `GET /export` — export all posts' SEO meta as CSV, returned in the JSON response body
-* `POST /import` — apply updates from a CSV upload or JSON rows array
+* `GET /status`: detect the active SEO plugin and list available fields
+* `POST /bulk`: update SEO meta on up to 100 posts/terms in one call
+* `POST /bulk-alts`: update image alt text on up to 200 media-library attachments by URL
+* `GET /export`: export all posts' SEO meta as CSV, returned in the JSON response body
+* `POST /import`: apply updates from a CSV upload or JSON rows array
 * `GET /schema` (v1.6.0+): read back the custom JSON-LD schema stored on a post
 
 The standard WordPress REST route also works: `POST /wp/v2/posts/{id}` with a `meta` payload containing Yoast or Rank Math keys.
@@ -62,7 +62,7 @@ A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-seo-
 
 = Security =
 
-* Application Passwords (Basic Auth) — HTTPS required in production
+* Application Passwords (Basic Auth), HTTPS required in production
 * Per-post `edit_post` capability check on every write
 * Meta keys are allowlisted to the active plugin's known fields
 * URL-shaped fields (canonical, og_image, twitter_image) sanitised through `esc_url_raw`
@@ -74,8 +74,8 @@ Yoast SEO is a trademark of Yoast BV. Rank Math is a trademark of RankMath. Clau
 
 == Installation ==
 
-1. Upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**, or drop the PHP file into `wp-content/plugins/` via SFTP
-2. Activate
+1. Install from the WordPress.org plugin directory: **Plugins → Add New**, search for **Bulk SEO Meta Editor for AI Agents**. Or with WP-CLI: `wp plugin install bulk-seo-meta-editor-for-ai-agents --activate`. Or upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**
+2. Activate. There is no settings page: the REST API is live as soon as the plugin is active
 3. Set up an Application Password: **Users → Your Profile → Application Passwords → Add New**
 4. Test: `curl -u 'username:app pass' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`
 
@@ -83,25 +83,53 @@ For the optional MCP server, install via npm: `npm install -g bulk-seo-meta-edit
 
 == Frequently Asked Questions ==
 
+= How do I bulk edit meta descriptions in WordPress? =
+
+Activate the plugin, create an Application Password under **Users → Your Profile**, then send one `POST` to `/wp-json/seo-meta-bridge/v1/bulk` with up to 100 items. Each item is a post ID plus the fields to change, for example `{"id":123,"meta":{"description":"..."}}`. If you would rather work in a spreadsheet, `GET /export` returns every row as CSV (with live character counts) and `POST /import` writes the edited file back.
+
+= Can I bulk edit Yoast SEO titles without Yoast Premium? =
+
+Yes. The plugin writes the same postmeta keys Yoast Free reads from, so bulk title and description edits work on the free edition. Rank Math Free works the same way.
+
+= Does it work with Rank Math as well as Yoast? =
+
+Both. It detects whichever plugin is active and maps plugin-neutral aliases (`title`, `description`, `focus_kw`) onto the right meta keys for that plugin, so the same request body works on either site.
+
+= Can Claude or ChatGPT edit my WordPress SEO meta? =
+
+Yes, that is what it was built for. The bundled MCP server (`bulk-seo-meta-editor-mcp` on npm) gives Claude Code and Claude Desktop ten tools: status, read, write, bulk update, list posts, list terms, CSV export, CSV import, and schema get and set. Any other agent or automation tool can call the REST endpoints directly over HTTP Basic Auth.
+
+= How do I bulk update image alt text? =
+
+`POST /bulk-alts` accepts up to 200 `{ image_url, new_alt }` pairs per call and writes `_wp_attachment_image_alt` on the matching media-library attachment. CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes resolve back to the parent attachment automatically.
+
+= Can I add custom JSON-LD schema to a post? =
+
+Yes, since 1.6.0. Schema is stored per post and injected through Yoast's `wpseo_schema_graph` filter or Rank Math's `rank_math/json_ld` filter, so your nodes merge into the graph those plugins already output rather than appearing as a duplicate second block. Add mode appends, replace mode swaps the graph.
+
+= Does this work with a headless or decoupled WordPress setup? =
+
+Yes. Every field is readable and writable over REST, so a headless front end, a CI job or a content-ops script can manage SEO meta the same way it manages any other structured field.
+
 = Does this work with Yoast SEO Free / Premium / Rank Math Free / PRO? =
 
-Yes — the plugin uses the postmeta keys that all editions read from, so it works regardless of which tier is installed.
+Yes. The plugin uses the postmeta keys that all editions read from, so it works regardless of which tier is installed.
 
 = Can I run both Yoast and Rank Math at the same time? =
 
-You shouldn't — they conflict with each other in the front-end (duplicate meta tags). This plugin auto-detects whichever is active; if both are active, Yoast wins.
+You shouldn't. They conflict with each other in the front-end (duplicate meta tags). This plugin auto-detects whichever is active; if both are active, Yoast wins.
 
 = Is it safe to install on production? =
 
-Yes. The plugin is read-only until something hits the REST endpoints, and writes are scoped to SEO meta keys only — it cannot edit post content, users, or any other table. Per-post permission checks prevent privilege escalation.
+Yes. The plugin is read-only until something hits the REST endpoints, and writes are scoped to SEO meta keys only, it cannot edit post content, users, or any other table. Per-post permission checks prevent privilege escalation.
 
 = Does it work with WooCommerce products? =
 
-Yes — meta is registered on every public post type, so products, custom post types, etc. are all covered. Product category and product tag archives (and any other custom taxonomy) are also editable via the term endpoints (v1.3.0+).
+Yes. Meta is registered on every public post type, so products, custom post types, etc. are all covered. Product category and product tag archives (and any other custom taxonomy) are also editable via the term endpoints (v1.3.0+).
 
 = Can I edit category / tag archive SEO meta in bulk? =
 
-Yes (v1.3.0+). Pass `?include_terms=1` to `/export` to pull category, tag, and any custom-taxonomy archive rows alongside posts. Post `/bulk` items with `kind: "term"` and the `taxonomy` slug to update them. Yoast term meta is stored in the `wpseo_taxonomy_meta` option; Rank Math uses standard term meta. Both are handled transparently — you pass plugin-neutral aliases (`title`, `description`, `og_title`, etc.) and the plugin writes to the right place.
+Yes (v1.3.0+). Pass `?include_terms=1` to `/export` to pull category, tag, and any custom-taxonomy archive rows alongside posts. Post `/bulk` items with `kind: "term"` and the `taxonomy` slug to update them. Yoast term meta is stored in the `wpseo_taxonomy_meta` option; Rank Math uses standard term meta. Both are handled transparently, you pass plugin-neutral aliases (`title`, `description`, `og_title`, etc.) and the plugin writes to the right place.
 
 = Why am I getting 401 Unauthorized on localhost? =
 
@@ -109,7 +137,7 @@ WordPress disables Application Passwords on non-HTTPS sites by default. For loca
 
 = Why does `curl` work but my Python/Node script gets 403 Forbidden? =
 
-The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Security, Cloudflare WAF) is rejecting the request based on User-Agent before WordPress sees it. Default UAs like `python-requests/2.x` and Node's bare `node-fetch` are on most WAF blocklists. Send a regular browser User-Agent header on every REST call (e.g. `Mozilla/5.0 ... Chrome/124.0 Safari/537.36`) and the 403 disappears. The bundled MCP server (v1.4.2+) already does this automatically — override with `MCP_USER_AGENT` if your host has a stricter rule. Symptom signature: `curl -u 'user:pass' https://site/wp-json/seo-meta-bridge/v1/status` returns 200, but the same call from Python/Node with the same credentials returns 403 with an Apache HTML error page (not a WP JSON error).
+The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Security, Cloudflare WAF) is rejecting the request based on User-Agent before WordPress sees it. Default UAs like `python-requests/2.x` and Node's bare `node-fetch` are on most WAF blocklists. Send a regular browser User-Agent header on every REST call (e.g. `Mozilla/5.0 ... Chrome/124.0 Safari/537.36`) and the 403 disappears. The bundled MCP server (v1.4.2+) already does this automatically, override with `MCP_USER_AGENT` if your host has a stricter rule. Symptom signature: `curl -u 'user:pass' https://site/wp-json/seo-meta-bridge/v1/status` returns 200, but the same call from Python/Node with the same credentials returns 403 with an Apache HTML error page (not a WP JSON error).
 
 = Can the plugin be used to write arbitrary postmeta? =
 
