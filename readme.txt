@@ -2,8 +2,8 @@
 Contributors: puneetindersingh
 Tags: yoast, rank-math, bulk-edit, meta-description, mcp
 Requires at least: 5.6
-Tested up to: 7.0
-Stable tag: 1.8.1
+Tested up to: 7.1
+Stable tag: 1.8.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -145,6 +145,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 1.8.2 =
+* Security: the custom JSON-LD schema field now rejects any value that contains a raw HTML angle bracket (< or >) when saved, and strips angle brackets from stored schema on output. This closes a stored cross-site scripting issue on Rank Math sites, where a crafted JSON-LD object key could break out of the schema script block. Yoast sites were not affected. No valid JSON-LD needs raw angle brackets, so normal schema is untouched. Reported responsibly by Junhui Mo (Guangzhou University).
+
 = 1.8.1 =
 * Security: `GET /export` now capability-filters every row it returns, using the same capability the matching write path enforces. Term rows require the `edit_term` meta capability on each term, so taxonomies registered with their own capabilities are respected. CPT archive rows require `manage_options`, matching the archive write path, because those values live in the SEO plugin's site-wide settings rather than on an object. Post rows are checked with `edit_post` per post instead of relying on the `edit_others_posts` pre-filter, which covers only the core post capabilities and not custom post types that declare their own `capability_type`. Rows the caller cannot manage are omitted, so `/export` no longer returns SEO metadata for objects the caller could not open in wp-admin.
 * Note: a caller who could previously export taxonomy terms or CPT archive settings without holding the matching capability will now receive fewer rows. Administrators, and Editors acting within their own capabilities, see no change. `row_count` still reports the number of rows actually emitted.
@@ -235,6 +238,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.8.2 =
+Security fix. Closes a stored XSS in the JSON-LD schema field on Rank Math sites. Updating is recommended for anyone using the schema feature.
 
 = 1.8.1 =
 Permission fix: GET /export now filters its rows by capability, so terms need edit_term, CPT archive settings need manage_options, and posts are checked with edit_post per post. Automation that exported terms or archive settings on a low-privilege account will get fewer rows.

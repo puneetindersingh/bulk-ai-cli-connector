@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.8.1
+ * Version: 1.8.2
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -13,7 +13,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Keep in sync with the `Version:` header line above on every release.
-define('BULKSEME_VERSION', '1.8.1');
+define('BULKSEME_VERSION', '1.8.2');
 
 add_action('init', function () {
 
@@ -764,6 +764,58 @@ function bulkseme_apply_update($post_id, $meta) {
 //                            (our nodes become the whole graph for that page)
 
 /**
+ * True if any string key or string value anywhere in the decoded schema holds a
+ * raw HTML angle bracket. A < or > has no legitimate place in a JSON-LD document
+ * (text properties are plain text and URLs are percent-encoded), and it is the
+ * one character class that can break out of the
+ * <script type="application/ld+json"> block the schema is printed into. The
+ * schema rides the active SEO plugin's own encoder at output time, and neither
+ * Yoast nor Rank Math escapes object *keys* (Rank Math also prints with
+ * JSON_UNESCAPED_SLASHES), so a stored </script> sequence would be emitted
+ * verbatim. We refuse to store it. See bulkseme_schema_strip_markup() for the
+ * matching output-side net that also neutralises anything a pre-1.8.2 install
+ * may already have saved.
+ */
+function bulkseme_schema_contains_markup($data) {
+    if (is_string($data)) {
+        return strpbrk($data, '<>') !== false;
+    }
+    if (is_array($data)) {
+        foreach ($data as $key => $value) {
+            if (is_string($key) && strpbrk($key, '<>') !== false) {
+                return true;
+            }
+            if (bulkseme_schema_contains_markup($value)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Recursively remove < and > from every string key and string value in a schema
+ * structure. Defence in depth on the output path: a payload saved by an older
+ * vulnerable build renders inert without the owner having to re-save the post.
+ */
+function bulkseme_schema_strip_markup($data) {
+    if (is_string($data)) {
+        return str_replace(array('<', '>'), '', $data);
+    }
+    if (!is_array($data)) {
+        return $data;
+    }
+    $clean = array();
+    foreach ($data as $key => $value) {
+        if (is_string($key)) {
+            $key = str_replace(array('<', '>'), '', $key);
+        }
+        $clean[$key] = bulkseme_schema_strip_markup($value);
+    }
+    return $clean;
+}
+
+/**
  * Validate and store a JSON-LD blob against a post. An empty value clears it.
  * Returns true on success, or a short error string on invalid JSON.
  *
@@ -781,6 +833,11 @@ function bulkseme_store_schema($post_id, $value) {
     $decoded = json_decode($raw, true);
     if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
         return 'invalid_json_schema';
+    }
+    // Refuse raw HTML angle brackets: they are the stored-XSS breakout vector and
+    // never occur in valid JSON-LD. See bulkseme_schema_contains_markup().
+    if (bulkseme_schema_contains_markup($decoded)) {
+        return 'schema_contains_markup';
     }
     $canonical = wp_json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     if (!is_string($canonical)) {
@@ -823,7 +880,7 @@ function bulkseme_schema_nodes_for_post($post_id) {
             continue;
         }
         unset($node['@context']);
-        $clean[] = $node;
+        $clean[] = bulkseme_schema_strip_markup($node);
     }
     return $clean;
 }
