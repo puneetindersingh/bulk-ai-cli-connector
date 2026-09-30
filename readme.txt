@@ -1,9 +1,9 @@
 === Bulk SEO Meta Editor for AI Agents ===
 Contributors: puneetindersingh
 Tags: yoast, rank-math, bulk-edit, meta-description, mcp
-Requires at least: 5.6
+Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 1.8.2
+Stable tag: 1.9.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -27,7 +27,10 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 * **Auto-detection**: works with Yoast SEO or Rank Math, picks the active one automatically
 * **Per-object permission checks**: Contributors and Authors can only edit posts, media and terms they could edit in wp-admin; site-wide archive and global settings require an administrator
 * **Allowlist enforcement**: only meta keys belonging to the active SEO plugin are accepted; arbitrary postmeta writes are rejected
-* **Custom JSON-LD schema** (v1.6.0+): store structured data (FAQPage, HowTo, Service, or any type) per post; it is injected into Yoast's or Rank Math's existing schema graph rather than as a duplicate block
+* **Custom JSON-LD schema** (v1.6.0+): store structured data (FAQPage, HowTo, Service, or any type) per post, and since 1.9.0 per category, tag or custom taxonomy term; it is injected into Yoast's or Rank Math's existing schema graph rather than as a duplicate block. When no SEO plugin schema graph is printed on the page (no Yoast or Rank Math, or their schema output switched off), the plugin prints the stored schema as its own JSON-LD block (v1.9.0+)
+* **Post titles** (v1.9.0+): send `post_title` in a `/bulk` item to rename a post; the slug is never touched
+* **Sitemap refresh** (v1.9.0+): `POST /sitemap/flush` clears the Yoast or Rank Math sitemap cache after REST edits
+* **Invalid Product schema guard** (v1.9.0+): drops `Product` nodes that carry no `offers`, `review` or `aggregateRating`, the ones Search Console reports as invalid on quote-only WooCommerce catalogues. Disable with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false')`
 
 = REST endpoints =
 
@@ -38,7 +41,8 @@ All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-me
 * `POST /bulk-alts`: update image alt text on up to 200 media-library attachments by URL
 * `GET /export`: export all posts' SEO meta as CSV, returned in the JSON response body
 * `POST /import`: apply updates from a CSV upload or JSON rows array
-* `GET /schema` (v1.6.0+): read back the custom JSON-LD schema stored on a post
+* `GET /schema` (v1.6.0+): read back the custom JSON-LD schema stored on a post; add `kind=term&taxonomy=<slug>` for a term (v1.9.0+)
+* `POST /sitemap/flush` (v1.9.0+): clear the Yoast or Rank Math sitemap cache so the next sitemap request rebuilds from live data
 
 The standard WordPress REST route also works: `POST /wp/v2/posts/{id}` with a `meta` payload containing Yoast or Rank Math keys.
 
@@ -107,6 +111,22 @@ Yes, that is what it was built for. The bundled MCP server (`bulk-seo-meta-edito
 
 Yes, since 1.6.0. Schema is stored per post and injected through Yoast's `wpseo_schema_graph` filter or Rank Math's `rank_math/json_ld` filter, so your nodes merge into the graph those plugins already output rather than appearing as a duplicate second block. Add mode appends, replace mode swaps the graph.
 
+= Can I add schema to a category or product category archive? =
+
+Yes, since 1.9.0. Send a `/bulk` item with `kind: "term"`, the `taxonomy` slug and a `schema` field, the same way you send term titles and descriptions. The schema renders on the first page of that term's archive only, which is the page that shows the term description. Read it back with `GET /schema?id=<term_id>&kind=term&taxonomy=<slug>`. Writing needs the `edit_term` capability on that term.
+
+= Does the schema work without Yoast or Rank Math? =
+
+Yes, since 1.9.0. If no SEO plugin schema graph is printed on the page, whether because neither plugin is installed or because its schema output has been switched off, the plugin prints the stored schema as its own `<script type="application/ld+json">` block. Meta title and description editing still needs Yoast or Rank Math, because those fields belong to them.
+
+= Why did the Product schema disappear from some WooCommerce product pages? =
+
+Since 1.9.0 the plugin removes `Product` nodes that carry none of `offers`, `review` or `aggregateRating` from the Yoast and Rank Math schema graphs. Google requires at least one of them, so a quote-only product (no price) can never earn a product rich result and only produces an "invalid" entry in Search Console. Products with a price are untouched, and the node comes back on its own once a price is added. To keep those nodes anyway: `add_filter('bulkseme_drop_invalid_product_schema', '__return_false');`.
+
+= Can I rename a post through the API? =
+
+Yes, since 1.9.0. Send `post_title` in a `/bulk` item. The value is sanitised as plain text, the slug and URL never change, and the caller needs `edit_post` on that post. `/import` ignores the `post_title` column, so a CSV round trip cannot rename anything.
+
 = Does this work with a headless or decoupled WordPress setup? =
 
 Yes. Every field is readable and writable over REST, so a headless front end, a CI job or a content-ops script can manage SEO meta the same way it manages any other structured field.
@@ -121,7 +141,7 @@ You shouldn't. They conflict with each other in the front-end (duplicate meta ta
 
 = Is it safe to install on production? =
 
-Yes. The plugin is read-only until something hits the REST endpoints, and writes are scoped to SEO meta keys only, it cannot edit post content, users, or any other table. Per-post permission checks prevent privilege escalation.
+Yes. The plugin is read-only until something hits the REST endpoints, and writes are scoped to SEO meta keys, custom schema, image alt text and (only when you send it) the post title. It cannot edit post content, users, or any other table. Per-post permission checks prevent privilege escalation.
 
 = Does it work with WooCommerce products? =
 
@@ -141,9 +161,18 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 
 = Can the plugin be used to write arbitrary postmeta? =
 
-No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Other keys are rejected with `unknown_or_disallowed_key`.
+No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted, plus the plugin's own `schema` and `schema_mode` fields and, since 1.9.0, `post_title`. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 1.9.0 =
+* New: custom JSON-LD schema on taxonomy terms. `/bulk` items with `kind: "term"` accept the same `schema` and `schema_mode` fields as posts, stored in term meta under the same keys, and `GET /schema?id=<term_id>&kind=term&taxonomy=<slug>` reads them back. The schema renders on the first page of the term archive only. On Rank Math the archive keeps its `CollectionPage` type next to an injected `FAQPage` instead of losing it.
+* New: schema output when no SEO plugin graph is printed. With no Yoast or Rank Math installed, or with their schema output switched off, stored schema is printed as the plugin's own JSON-LD block (encoded with JSON_HEX_TAG and JSON_HEX_AMP, on top of the existing markup checks). When a graph is printed, nothing changes: the nodes still merge into it. Filter `bulkseme_print_standalone_schema` disables the standalone block.
+* New: `post_title` accepted in `/bulk` items. Plain text only, slug untouched, `edit_post` required, empty values rejected with `empty_post_title`. `/import` keeps treating `post_title` as a read-only column.
+* New: `POST /sitemap/flush` clears the Rank Math and Yoast sitemap caches (`edit_others_posts` required) so sitemaps pick up REST edits without a wp-admin save.
+* New: invalid Product schema guard. `Product` nodes without `offers`, `review` or `aggregateRating` are removed from the Yoast and Rank Math graphs, together with any dangling `@id` references to them. Priced products are untouched. Disable with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false')`.
+* `/status` now reports `supports_term_schema`, `supports_post_title`, `supports_sitemap_flush` and `drops_invalid_product_schema`.
+* Requires WordPress 5.7 or later (was 5.6) for `wp_print_inline_script_tag()`.
 
 = 1.8.2 =
 * Security: the custom JSON-LD schema field now rejects any value that contains a raw HTML angle bracket (< or >) when saved, and strips angle brackets from stored schema on output. This closes a stored cross-site scripting issue on Rank Math sites, where a crafted JSON-LD object key could break out of the schema script block. Yoast sites were not affected. No valid JSON-LD needs raw angle brackets, so normal schema is untouched. Reported responsibly by Junhui Mo (Guangzhou University).
@@ -238,6 +267,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.9.0 =
+Adds schema on taxonomy terms, schema output without an SEO plugin graph, post_title via /bulk, POST /sitemap/flush, and removes Product schema nodes that have no offers, review or rating (filter bulkseme_drop_invalid_product_schema to keep them). Now requires WordPress 5.7.
 
 = 1.8.2 =
 Security fix. Closes a stored XSS in the JSON-LD schema field on Rank Math sites. Updating is recommended for anyone using the schema feature.

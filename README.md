@@ -17,7 +17,8 @@ Includes:
 
 - REST endpoints for individual and **bulk meta-tag updates** (up to 100 posts/call): titles, descriptions, canonical, robots, Open Graph and Twitter fields
 - **Bulk image alt text** updates by image URL (resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment)
-- **Custom JSON-LD schema** injection per post (FAQPage, Service, LocalBusiness, HowTo, any type), merged into the active SEO plugin's existing schema graph
+- **Custom JSON-LD schema** injection per post and per taxonomy term (FAQPage, Service, LocalBusiness, HowTo, any type), merged into the active SEO plugin's existing schema graph, or printed as the plugin's own block when no SEO plugin graph is on the page (1.9.0+)
+- **Post titles** through `/bulk` (`post_title`, slug untouched), **sitemap cache flush** (`POST /sitemap/flush`) and an **invalid Product schema guard** for quote-only WooCommerce catalogues (1.9.0+)
 - **CSV import/export** for spreadsheet-based editing
 - Taxonomy term archives, CPT archive pages, and global SEO scopes (author/date/search/404/home)
 - A bundled **MCP server** so Claude Code or Claude Desktop can drive it with one-command setup
@@ -123,7 +124,9 @@ Response: `{ "count": N, "results": [{ "id", "status", "errors": [...] }] }`
 
 **Partial-success semantics:** within a single item, valid meta keys are applied even when other keys in the same payload are rejected. The item's `status` is `error` if any key was rejected; the `errors` array names which ones. Use it to detect typos without re-sending the whole batch. Example: a payload with `_yoast_wpseo_title` (valid) and `_arbitrary_key` (rejected) updates the title and reports `errors: ["unknown_or_disallowed_key:_arbitrary_key"]`.
 
-**Allowlist:** only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted. Arbitrary postmeta writes are rejected, this endpoint cannot be used as a generic postmeta editor.
+**Allowlist:** only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted, plus the plugin's own `schema` / `schema_mode` fields and `post_title`. Arbitrary postmeta writes are rejected, this endpoint cannot be used as a generic postmeta editor.
+
+**Post title (1.9.0+):** `{ "id": 123, "meta": { "post_title": "New title" } }` renames the post. Plain text only, the slug never changes, `edit_post` is required and an empty value returns `empty_post_title`. `/import` keeps `post_title` read-only, so CSV round trips cannot rename posts.
 
 ### `GET /wp-json/seo-meta-bridge/v1/export`
 
@@ -157,7 +160,7 @@ Each row reports `status` (`ok` / `unchanged` / `skipped` / `error`), the resolv
 
 ### Custom JSON-LD schema (via `/bulk` + `/schema`)
 
-Attach custom JSON-LD to a post. The plugin stores it and injects it into the active SEO plugin's schema graph at render time (Yoast via `wpseo_schema_graph`, Rank Math via `rank_math/json_ld`), so your nodes join the existing `@graph` rather than creating a second, competing block. The plugin emits no markup of its own, so there is no output-escaping surface.
+Attach custom JSON-LD to a post or a taxonomy term. The plugin stores it and injects it into the active SEO plugin's schema graph at render time (Yoast via `wpseo_schema_graph`, Rank Math via `rank_math/json_ld`), so your nodes join the existing `@graph` rather than creating a second, competing block. Since 1.9.0, when no SEO plugin graph is printed on the page (no Yoast or Rank Math, or their schema output switched off), the stored schema is printed as the plugin's own `<script type="application/ld+json">` block, encoded with `JSON_HEX_TAG` and `JSON_HEX_AMP` on top of the markup checks applied on write. Filter `bulkseme_print_standalone_schema` turns that block off.
 
 ```bash
 curl -u 'user:app pass' -X POST https://site.com/wp-json/seo-meta-bridge/v1/bulk \
@@ -173,6 +176,14 @@ curl -u 'user:app pass' -X POST https://site.com/wp-json/seo-meta-bridge/v1/bulk
 - An empty `schema` value clears it.
 
 Read it back with `GET /wp-json/seo-meta-bridge/v1/schema?id=123` (returns the decoded schema and its add/replace mode).
+
+**Terms (1.9.0+):** send the same fields in a term item, `{ "id": 45, "kind": "term", "taxonomy": "product_cat", "meta": { "schema": "...", "schema_mode": "add" } }`, and read back with `GET /schema?id=45&kind=term&taxonomy=product_cat`. Term schema renders on the first page of the archive only (the page that shows the term description) and needs `edit_term` on that term. On Rank Math the archive keeps its `CollectionPage` type next to an injected `FAQPage`.
+
+**Invalid Product guard (1.9.0+):** `Product` nodes without `offers`, `review` or `aggregateRating` are removed from the Yoast and Rank Math graphs (with any dangling `@id` pointers to them), because Google cannot show a product rich result for them and only reports them as invalid in Search Console. Priced products are untouched. Opt out with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false');`.
+
+### `POST /wp-json/seo-meta-bridge/v1/sitemap/flush` (1.9.0+)
+
+Clears the Rank Math and Yoast sitemap caches so the next sitemap request rebuilds from live data. Useful after a batch of robots or slug edits over REST, which neither plugin notices on its own. Needs `edit_others_posts`. Response: `{ "ok": true, "flushed": ["yoast"] }`.
 
 ## MCP server (Claude Code / Claude Desktop)
 
@@ -241,7 +252,8 @@ Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤
 
 - Application Passwords transmit as Basic Auth, so **HTTPS is required**.
 - Per-object capability check on every write (not just `edit_posts`): `edit_post` for posts and attachments, `edit_term` for terms, `manage_options` for archive and global settings.
-- Meta keys are allowlisted to the active plugin's known fields. Arbitrary postmeta writes are rejected.
+- Meta keys are allowlisted to the active plugin's known fields (plus the plugin's own `schema`, `schema_mode` and `post_title`). Arbitrary postmeta writes are rejected.
+- Stored schema refuses raw `<` or `>` on write and strips them again on output; the standalone block is additionally encoded with `JSON_HEX_TAG` and `JSON_HEX_AMP`.
 - URL-shaped fields are run through `esc_url_raw` before save.
 - No new admin UI; nothing to misconfigure.
 

@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.8.2
+ * Version: 1.9.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -13,7 +13,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Keep in sync with the `Version:` header line above on every release.
-define('BULKSEME_VERSION', '1.8.2');
+define('BULKSEME_VERSION', '1.9.0');
 
 add_action('init', function () {
 
@@ -365,9 +365,34 @@ function bulkseme_apply_term_update($term_id, $taxonomy, $meta) {
     if (!current_user_can('edit_term', $term->term_id)) {
         return ['ok' => false, 'errors' => ['forbidden']];
     }
+
+    // Plugin-owned JSON-LD schema fields. Like the post version they do not
+    // depend on the active SEO plugin, so they are taken out of $meta before
+    // the no_seo_plugin check and the Yoast/Rank Math allowlist below. The
+    // per-term edit_term check above already gates them.
+    $schema_errors = [];
+    foreach (['schema', '_bulkseme_schema_jsonld'] as $schema_key) {
+        if (array_key_exists($schema_key, $meta)) {
+            $res = bulkseme_store_term_schema((int) $term->term_id, $meta[$schema_key]);
+            if ($res !== true) {
+                $schema_errors[] = $res;
+            }
+            unset($meta[$schema_key]);
+        }
+    }
+    foreach (['schema_mode', '_bulkseme_schema_mode'] as $mode_key) {
+        if (array_key_exists($mode_key, $meta)) {
+            update_term_meta((int) $term->term_id, '_bulkseme_schema_mode', $meta[$mode_key] === 'replace' ? 'replace' : 'add');
+            unset($meta[$mode_key]);
+        }
+    }
+    if (empty($meta)) {
+        return ['ok' => empty($schema_errors), 'errors' => $schema_errors];
+    }
+
     $active = bulkseme_active_term_keys();
     if (!$active['plugin']) {
-        return ['ok' => false, 'errors' => ['no_seo_plugin']];
+        return ['ok' => false, 'errors' => array_merge($schema_errors, ['no_seo_plugin'])];
     }
     $alias_to_meta = $active['keys'];
     $allowed       = array_values($alias_to_meta);
@@ -376,7 +401,7 @@ function bulkseme_apply_term_update($term_id, $taxonomy, $meta) {
         'rank_math_canonical_url', 'rank_math_facebook_image', 'rank_math_twitter_image',
     ];
 
-    $errors = [];
+    $errors = $schema_errors;
     foreach ($meta as $key => $value) {
         if (isset($alias_to_meta[$key])) {
             $key = $alias_to_meta[$key];
@@ -722,6 +747,27 @@ function bulkseme_apply_update($post_id, $meta) {
             continue;
         }
 
+        // WordPress post title. Themes print it as the page H1, so it is page
+        // copy rather than SEO-plugin meta and it sits outside the allowlist
+        // below. The edit_post check at the top of this function already
+        // covers it. The slug is never touched: wp_update_post() keeps the
+        // existing post_name. /import never sends this key (post_title is a
+        // read-only column there), so a CSV round trip cannot rename posts.
+        if ($key === 'post_title') {
+            $title = sanitize_text_field((string) $value);
+            if ($title === '') {
+                $errors[] = 'empty_post_title';
+                continue;
+            }
+            if ($title !== $post->post_title) {
+                $res = wp_update_post(['ID' => $post_id, 'post_title' => wp_slash($title)], true);
+                if (is_wp_error($res)) {
+                    $errors[] = 'post_title_update_failed';
+                }
+            }
+            continue;
+        }
+
         // Accept friendly aliases (title, description, focus_kw, ...) and translate
         // to the active plugin's raw meta key. Lets /export columns round-trip
         // through /bulk without manual key remapping.
@@ -746,22 +792,30 @@ function bulkseme_apply_update($post_id, $meta) {
 }
 
 // =============================================================================
-// Custom JSON-LD schema (per post/page)
+// Custom JSON-LD schema (per post/page and per taxonomy term)
 // =============================================================================
 // Self-contained module. Lets an AI agent store a block of JSON-LD against a
-// post and have it rendered in the page's structured data. We do NOT echo any
-// markup ourselves. Instead we hand the decoded nodes to whichever SEO plugin
-// is active so it encodes and prints them inside its own schema graph:
-//   * Yoast SEO  -> wpseo_schema_graph filter
-//   * Rank Math  -> rank_math/json_ld filter
-// Two upsides: (1) no output-escaping surface in our code, the SEO plugin owns
-// encoding; (2) the nodes join the existing @graph instead of creating a second
-// competing block, so there is no duplicate-schema conflict.
+// post or a taxonomy term and have it rendered in that page's structured data.
 //
-// Storage (prefixed, protected postmeta):
+// Output, in order of preference:
+//   1. Merged into the active SEO plugin's own schema graph, so the nodes join
+//      the existing @graph and there is no competing second block:
+//        * Yoast SEO  -> wpseo_schema_graph filter
+//        * Rank Math  -> rank_math/json_ld filter
+//   2. Our own <script type="application/ld+json"> block in wp_head, ONLY when
+//      no SEO plugin schema graph was built for the page: no Yoast or Rank Math
+//      installed, or one is installed with its schema output switched off
+//      (for example a site that returns false from wpseo_json_ld_output).
+//      Without this, stored schema never reached the page on those sites.
+//
+// Storage (prefixed, protected post meta and term meta, same keys for both):
 //   _bulkseme_schema_jsonld  raw JSON-LD string (validated on write)
 //   _bulkseme_schema_mode    'add' (merge into the graph) or 'replace'
 //                            (our nodes become the whole graph for that page)
+//
+// Term schema renders on the FIRST page of the term's archive only, because
+// that is the only page where WordPress and WooCommerce print the term
+// description, which is where the content the schema describes lives.
 
 /**
  * True if any string key or string value anywhere in the decoded schema holds a
@@ -848,16 +902,66 @@ function bulkseme_store_schema($post_id, $value) {
 }
 
 /**
+ * Term counterpart of bulkseme_store_schema(): validate and store a JSON-LD
+ * blob against a taxonomy term (category, tag, product category, any public
+ * taxonomy). Same rules: empty clears it, markup is refused, the document is
+ * re-encoded canonically and slashed for update_metadata(). The caller has
+ * already checked edit_term for this term.
+ */
+function bulkseme_store_term_schema($term_id, $value) {
+    $raw = is_string($value) ? trim($value) : '';
+    if ($raw === '') {
+        delete_term_meta($term_id, '_bulkseme_schema_jsonld');
+        return true;
+    }
+    $decoded = json_decode($raw, true);
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+        return 'invalid_json_schema';
+    }
+    if (bulkseme_schema_contains_markup($decoded)) {
+        return 'schema_contains_markup';
+    }
+    $canonical = wp_json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($canonical)) {
+        return 'invalid_json_schema';
+    }
+    update_term_meta($term_id, '_bulkseme_schema_jsonld', wp_slash($canonical));
+    return true;
+}
+
+/**
  * Decode a post's stored JSON-LD into a flat list of node arrays, ready to drop
- * into a schema @graph. Accepts three author shapes:
+ * into a schema @graph. See bulkseme_schema_nodes_from_raw() for the accepted
+ * shapes.
+ */
+function bulkseme_schema_nodes_for_post($post_id) {
+    return bulkseme_schema_nodes_from_raw(get_post_meta($post_id, '_bulkseme_schema_jsonld', true));
+}
+
+/**
+ * Same as bulkseme_schema_nodes_for_post(), for a taxonomy term.
+ */
+function bulkseme_schema_nodes_for_term($term_id) {
+    return bulkseme_schema_nodes_from_raw(get_term_meta($term_id, '_bulkseme_schema_jsonld', true));
+}
+
+/**
+ * 'add' (default) or 'replace' for a term's stored schema.
+ */
+function bulkseme_schema_mode_for_term($term_id) {
+    return get_term_meta($term_id, '_bulkseme_schema_mode', true) === 'replace' ? 'replace' : 'add';
+}
+
+/**
+ * Shared decoder behind the post and term node getters. Accepts three author
+ * shapes:
  *   1. a full document  { "@context": "...", "@graph": [ ...nodes ] }
  *   2. a bare list       [ ...nodes ]
  *   3. a single node     { "@type": "FAQPage", ... }
- * Per-node "@context" is stripped because the SEO plugin sets one top-level
- * context for the whole graph.
+ * Per-node "@context" is stripped because the graph carries one top-level
+ * context for the whole document.
  */
-function bulkseme_schema_nodes_for_post($post_id) {
-    $raw = get_post_meta($post_id, '_bulkseme_schema_jsonld', true);
+function bulkseme_schema_nodes_from_raw($raw) {
     if (!is_string($raw) || trim($raw) === '') {
         return [];
     }
@@ -893,11 +997,26 @@ function bulkseme_schema_mode_for_post($post_id) {
 }
 
 /**
- * The schema nodes + mode for the post currently being rendered. Returns empty
- * nodes for non-singular views (archives, search, home), where per-post schema
- * does not apply.
+ * The schema nodes + mode for the view currently being rendered: a singular
+ * post, or the first page of a taxonomy term archive. Returns empty nodes for
+ * every other view (search, home, date and author archives, CPT archives).
+ *
+ * Term schema is limited to the first page because that is the only page of an
+ * archive where WordPress and WooCommerce print the term description, which is
+ * where the content the schema describes (an FAQ block, a service summary)
+ * lives. Marking up /page/2/ would describe content that is not on the page.
  */
 function bulkseme_current_schema() {
+    if (is_category() || is_tag() || is_tax()) {
+        $term = get_queried_object();
+        if (!($term instanceof WP_Term) || is_paged()) {
+            return ['mode' => 'add', 'nodes' => []];
+        }
+        return [
+            'mode'  => bulkseme_schema_mode_for_term($term->term_id),
+            'nodes' => bulkseme_schema_nodes_for_term($term->term_id),
+        ];
+    }
     if (!is_singular()) {
         return ['mode' => 'add', 'nodes' => []];
     }
@@ -941,6 +1060,234 @@ add_filter('rank_math/json_ld', function ($data, $jsonld) {
     }
     return $data;
 }, 99, 2);
+
+// ---- Did an SEO plugin build a schema graph for this page? -------------------
+// Yoast applies wpseo_schema_graph, and Rank Math applies rank_math/json_ld,
+// only while building the JSON-LD block they are about to print. When a site
+// switches that output off (Yoast's wpseo_json_ld_output returning false, its
+// Schema presenter removed, or Rank Math's Schema module disabled) the filters
+// never run, so the merge filters above never see our nodes and the schema
+// would silently go missing. These priority-1 observers record that a graph
+// was built; the standalone block below prints only when none was.
+function bulkseme_seo_graph_built($set = null) {
+    static $built = false;
+    if ($set !== null) {
+        $built = (bool) $set;
+    }
+    return $built;
+}
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Yoast SEO's own public Schema API filter; we observe it and return the graph unchanged.
+add_filter('wpseo_schema_graph', function ($graph) {
+    bulkseme_seo_graph_built(true);
+    return $graph;
+}, 1);
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Rank Math's own public JSON-LD filter; we observe it and return the data unchanged.
+add_filter('rank_math/json_ld', function ($data) {
+    bulkseme_seo_graph_built(true);
+    return $data;
+}, 1);
+
+// ---- Rank Math, term archives: keep the archive's own page type -------------
+// Rank Math folds any FAQPage node into its WebPage node (priority 99, the same
+// hook our nodes arrive on). On a post that carries Rank Math schema types the
+// result is a type list such as ["WebPage","FAQPage"], but when the view has
+// none, which is always the case on a taxonomy archive, it overwrites the type
+// with a bare "FAQPage" and the archive stops being a CollectionPage. Record
+// the type before that runs and put it back next to FAQPage afterwards. Scoped
+// to term archives, so post output is exactly what it was before 1.9.0.
+function bulkseme_term_webpage_type($set = null) {
+    static $type = null;
+    if ($set !== null) {
+        $type = $set;
+    }
+    return $type;
+}
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Rank Math's own public JSON-LD filter; we are a consumer of it, not the owner.
+add_filter('rank_math/json_ld', function ($data) {
+    if ((is_category() || is_tag() || is_tax()) && is_array($data) && !empty($data['WebPage']['@type'])) {
+        bulkseme_term_webpage_type($data['WebPage']['@type']);
+    }
+    return $data;
+}, 98);
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Rank Math's own public JSON-LD filter; we are a consumer of it, not the owner.
+add_filter('rank_math/json_ld', function ($data) {
+    $before = bulkseme_term_webpage_type();
+    if (!(is_category() || is_tag() || is_tax()) || $before === null || !is_array($data)) {
+        return $data;
+    }
+    if (isset($data['WebPage']['@type']) && $data['WebPage']['@type'] === 'FAQPage') {
+        $types = array_values(array_unique(array_merge((array) $before, ['FAQPage'])));
+        $data['WebPage']['@type'] = count($types) === 1 ? $types[0] : $types;
+    }
+    return $data;
+}, 100);
+
+// ---- Standalone output: no SEO plugin schema graph on this page -------------
+// Covers a site with no Yoast or Rank Math (or another schema plugin, or none),
+// and a site where one is installed with its schema output switched off. The
+// block is printed through wp_print_inline_script_tag(). The JSON is encoded
+// with JSON_HEX_TAG | JSON_HEX_AMP, so < > & can never appear literally inside
+// the <script> element, on top of the markup already refused on write and
+// stripped again by bulkseme_schema_nodes_from_raw().
+add_action('wp_head', function () {
+    if (bulkseme_seo_graph_built()) {
+        return; // the SEO plugin's graph carried our nodes
+    }
+    $schema = bulkseme_current_schema();
+    if (empty($schema['nodes'])) {
+        return;
+    }
+    $nodes = bulkseme_drop_invalid_product_nodes($schema['nodes']);
+    /**
+     * Filter: return false to stop the plugin printing its own JSON-LD block
+     * on pages where no SEO plugin schema graph was built.
+     *
+     * @param bool  $print Default true.
+     * @param array $nodes The nodes that would be printed.
+     */
+    if (empty($nodes) || !apply_filters('bulkseme_print_standalone_schema', true, $nodes)) {
+        return;
+    }
+    $json = wp_json_encode(
+        ['@context' => 'https://schema.org', '@graph' => array_values($nodes)],
+        JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
+    if (!is_string($json)) {
+        return;
+    }
+    wp_print_inline_script_tag($json, ['type' => 'application/ld+json', 'class' => 'bulkseme-schema']);
+}, 20);
+
+// -----------------------------------------------------------------------------
+// Invalid-Product schema guard
+// -----------------------------------------------------------------------------
+// Google requires a Product entity to carry at least one of `offers`, `review`
+// or `aggregateRating`. A quote-only catalogue (B2B manufacturer, hire fleet,
+// "contact us for pricing") has none of them, but the WooCommerce integrations
+// in Yoast and Rank Math still emit a Product node on every product page. Each
+// one is permanently Invalid under Search Console > Shopping > Product snippets;
+// no product rich result was ever achievable, so the markup buys nothing and
+// leaves a red report the site owner can never clear.
+//
+// This drops ONLY graph-level Product nodes that carry none of the required
+// properties. A product with a price keeps its Product schema untouched, and if
+// pricing is added later the schema returns on the next page load with nothing
+// to undo. Every other node is left exactly as the SEO plugin built it.
+//
+// Opt out on a site:
+//   add_filter('bulkseme_drop_invalid_product_schema', '__return_false');
+
+/**
+ * True if a Product node carries at least one property that makes it eligible
+ * for a product rich result. `hasVariant` is included because a variant parent
+ * carries its pricing on the child ProductGroup entries.
+ */
+function bulkseme_product_node_is_valid($node) {
+    foreach (['offers', 'review', 'aggregateRating', 'hasVariant'] as $required) {
+        if (!empty($node[$required])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Strip `{"@id": "..."}` pointers to nodes we removed, at any depth, so the
+ * graph is never left referencing an entity that no longer exists. Returns null
+ * when the value IS such a pointer (or becomes empty once pruned), which tells
+ * the caller to drop the key that held it.
+ */
+function bulkseme_schema_prune_refs($value, $dead_ids) {
+    if (!is_array($value)) {
+        return $value;
+    }
+    // A pure reference: exactly {"@id": "<id we dropped>"}.
+    if (isset($value['@id']) && 1 === count($value)
+        && is_string($value['@id']) && in_array($value['@id'], $dead_ids, true)) {
+        return null;
+    }
+    $is_list = empty($value) || array_keys($value) === range(0, count($value) - 1);
+    $out     = [];
+    $removed = false;
+    foreach ($value as $k => $v) {
+        $pruned = bulkseme_schema_prune_refs($v, $dead_ids);
+        if (null === $pruned) {
+            $removed = true;
+            continue;
+        }
+        $out[$k] = $pruned;
+    }
+    // Only collapse a list that we emptied ourselves. A property that was
+    // already an empty array is left exactly as the SEO plugin wrote it.
+    if ($is_list) {
+        $out = array_values($out);
+        if (empty($out) && $removed) {
+            return null;
+        }
+    }
+    return $out;
+}
+
+/**
+ * Remove unqualifiable Product nodes from a schema graph. Accepts Yoast's
+ * numerically indexed graph and Rank Math's keyed one; keys are preserved so
+ * either plugin gets back the shape it handed us.
+ */
+function bulkseme_drop_invalid_product_nodes($nodes) {
+    if (!is_array($nodes) || empty($nodes)) {
+        return $nodes;
+    }
+    /**
+     * Filter: return false to keep Product nodes that cannot validate.
+     *
+     * @param bool $enabled Default true.
+     */
+    if (!apply_filters('bulkseme_drop_invalid_product_schema', true)) {
+        return $nodes;
+    }
+    $dead_ids = [];
+    $kept     = [];
+    foreach ($nodes as $key => $node) {
+        if (is_array($node) && isset($node['@type'])) {
+            $types = is_array($node['@type']) ? $node['@type'] : [$node['@type']];
+            if (in_array('Product', $types, true) && !bulkseme_product_node_is_valid($node)) {
+                if (!empty($node['@id']) && is_string($node['@id'])) {
+                    $dead_ids[] = $node['@id'];
+                }
+                continue;
+            }
+        }
+        $kept[$key] = $node;
+    }
+    if (count($kept) === count($nodes)) {
+        return $nodes; // nothing qualified for removal: hand back the original
+    }
+    if (!empty($dead_ids)) {
+        foreach ($kept as $key => $node) {
+            $pruned = bulkseme_schema_prune_refs($node, $dead_ids);
+            if (null === $pruned) {
+                unset($kept[$key]);
+                continue;
+            }
+            $kept[$key] = $pruned;
+        }
+    }
+    return $kept;
+}
+
+// Runs after our own node injection above (Yoast 11, Rank Math 99) so the guard
+// sees the final graph, including anything we merged into it.
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Yoast SEO's own public Schema API filter; we are a consumer of it, not the owner.
+add_filter('wpseo_schema_graph', function ($graph) {
+    if (!is_array($graph)) {
+        return $graph;
+    }
+    return array_values(bulkseme_drop_invalid_product_nodes($graph));
+}, 20, 1);
+// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- Rank Math's own public JSON-LD filter; we are a consumer of it, not the owner.
+add_filter('rank_math/json_ld', function ($data) {
+    return bulkseme_drop_invalid_product_nodes($data);
+}, 999, 1);
 
 /**
  * Resolve an image URL to a media-library attachment ID, tolerant of the
@@ -1104,6 +1451,10 @@ add_action('rest_api_init', function () {
                 'supports_globals'  => !empty($global_scopes),
                 'supports_alts'     => true,
                 'supports_schema'   => true,
+                'supports_term_schema'   => true,
+                'supports_post_title'    => true,
+                'supports_sitemap_flush' => true,
+                'drops_invalid_product_schema' => (bool) apply_filters('bulkseme_drop_invalid_product_schema', true),
                 'schema_fields'     => [
                     'schema'      => '_bulkseme_schema_jsonld',
                     'schema_mode' => '_bulkseme_schema_mode',
@@ -1118,6 +1469,7 @@ add_action('rest_api_init', function () {
     // (plus its add/replace mode). Useful for an agent to verify what it wrote,
     // or to audit which posts already carry custom schema. Decoded so callers
     // get an object, not a re-encoded string.
+    // GET /schema?id=45&kind=term&taxonomy=product_cat reads a term's schema.
     register_rest_route('seo-meta-bridge/v1', '/schema', [
         'methods'             => 'GET',
         'permission_callback' => $perm,
@@ -1126,9 +1478,41 @@ add_action('rest_api_init', function () {
                 'required'          => true,
                 'sanitize_callback' => 'absint',
             ],
+            'kind' => [
+                'required'          => false,
+                'sanitize_callback' => 'sanitize_key',
+            ],
+            'taxonomy' => [
+                'required'          => false,
+                'sanitize_callback' => 'sanitize_key',
+            ],
         ],
         'callback'            => function (WP_REST_Request $req) {
             $id = (int) $req->get_param('id');
+            if ((string) $req->get_param('kind') === 'term') {
+                $taxonomy = (string) $req->get_param('taxonomy');
+                if ($taxonomy === '' || !taxonomy_exists($taxonomy)) {
+                    return new WP_Error('unknown_taxonomy', 'a valid taxonomy is required for kind=term', ['status' => 400]);
+                }
+                $term = $id ? get_term($id, $taxonomy) : null;
+                if (!$term || is_wp_error($term)) {
+                    return new WP_Error('term_not_found', 'term not found', ['status' => 404]);
+                }
+                // Per-term meta cap, the same gate the /bulk term writer uses.
+                if (!current_user_can('edit_term', $term->term_id)) {
+                    return new WP_Error('forbidden', 'cannot edit this term', ['status' => 403]);
+                }
+                $raw     = get_term_meta($term->term_id, '_bulkseme_schema_jsonld', true);
+                $decoded = (is_string($raw) && $raw !== '') ? json_decode($raw, true) : null;
+                return [
+                    'id'         => (int) $term->term_id,
+                    'kind'       => 'term',
+                    'taxonomy'   => $taxonomy,
+                    'mode'       => bulkseme_schema_mode_for_term($term->term_id),
+                    'has_schema' => !empty($decoded),
+                    'schema'     => $decoded,
+                ];
+            }
             if (!$id || !get_post($id)) {
                 return new WP_Error('post_not_found', 'post not found', ['status' => 404]);
             }
@@ -1142,6 +1526,39 @@ add_action('rest_api_init', function () {
                 'mode'   => bulkseme_schema_mode_for_post($id),
                 'has_schema' => !empty($decoded),
                 'schema' => $decoded,
+            ];
+        },
+    ]);
+
+    // -------- /sitemap/flush -------------------------------------------------
+    // Rebuild the SEO plugin's XML sitemap after REST edits. Rank Math keeps its
+    // sitemaps cached and only invalidates them from wp-admin or WP-Cron, so a
+    // noindex flip, slug change or new page made through this API leaves the
+    // sitemap stale until someone saves a setting in wp-admin. Yoast's sitemap
+    // cache has the same blind spot for direct meta writes. This calls each
+    // plugin's own public cache-clear method; nothing is written and no setting
+    // changes. The next sitemap request rebuilds from live data. Editors and up
+    // (edit_others_posts), because it affects every URL in the sitemap.
+    register_rest_route('seo-meta-bridge/v1', '/sitemap/flush', [
+        'methods'             => 'POST',
+        'permission_callback' => $perm,
+        'callback'            => function () {
+            if (!current_user_can('edit_others_posts')) {
+                return new WP_Error('forbidden', 'editor capability required', ['status' => 403]);
+            }
+            $flushed = [];
+            if (class_exists('\\RankMath\\Sitemap\\Cache') && is_callable(['\\RankMath\\Sitemap\\Cache', 'invalidate_storage'])) {
+                \RankMath\Sitemap\Cache::invalidate_storage();
+                $flushed[] = 'rankmath';
+            }
+            if (class_exists('WPSEO_Sitemaps_Cache') && is_callable(['WPSEO_Sitemaps_Cache', 'clear'])) {
+                WPSEO_Sitemaps_Cache::clear();
+                $flushed[] = 'yoast';
+            }
+            return [
+                'ok'      => !empty($flushed),
+                'flushed' => $flushed,
+                'note'    => empty($flushed) ? 'no supported sitemap cache found (Rank Math or Yoast sitemap module not active)' : '',
             ];
         },
     ]);
