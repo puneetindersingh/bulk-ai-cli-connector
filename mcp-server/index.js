@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// MCP server for Bulk SEO Meta Editor for AI Agents.
+// MCP server for Bulk AI CLI Connector (formerly Bulk SEO Meta Editor for AI Agents).
 // Exposes the WP plugin's REST endpoints as MCP tools so Claude Code /
 // Claude Desktop can read and bulk-update SEO meta with a single tool call.
 //
@@ -30,7 +30,7 @@ const auth = 'Basic ' + Buffer.from(`${USER}:${PASS}`).toString('base64');
 // Security) return 403 to anything whose User-Agent looks like a bot or
 // HTTP library. Node's default fetch UA ("node") and "node-fetch/x" both
 // trip these rulesets, so requests get blocked before WordPress even sees
-// the auth header. Send a regular browser UA on every request — it's
+// the auth header. Send a regular browser UA on every request: it's
 // purely about getting past the WAF, not about pretending to be a browser.
 // Override with MCP_USER_AGENT env var if you want a custom string.
 const UA = process.env.MCP_USER_AGENT
@@ -39,7 +39,7 @@ const UA = process.env.MCP_USER_AGENT
    + 'Chrome/124.0 Safari/537.36 BulkSEOMetaEditorMCP';
 
 // Build a REST URL using ?rest_route=/X form. This is the universal URL
-// shape — it works on every WP install (pretty permalinks or plain), so
+// shape: it works on every WP install (pretty permalinks or plain), so
 // we don't need to detect permalink structure or worry about htaccess /
 // nginx rewrites being missing on the target site.
 function restUrl(path, params) {
@@ -145,7 +145,7 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        taxonomy:   { type: 'string', default: 'category', description: 'Taxonomy slug — category, post_tag, product_cat, product_tag, or any custom taxonomy.' },
+        taxonomy:   { type: 'string', default: 'category', description: 'Taxonomy slug: category, post_tag, product_cat, product_tag, or any custom taxonomy.' },
         per_page:   { type: 'integer', default: 50, maximum: 100 },
         page:       { type: 'integer', default: 1 },
         search:     { type: 'string', description: 'Optional name/slug search.' },
@@ -226,7 +226,7 @@ const tools = [
 ];
 
 const server = new Server(
-  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.7.0' },
+  { name: 'bulk-seo-meta-editor-for-ai-agents', version: '1.7.1' },
   { capabilities: { tools: {} } }
 );
 
@@ -234,6 +234,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args = {} } = req.params;
+  // Tool arguments end up in the request path, and the low-level MCP server
+  // does not check them against each tool's input schema. Check them here.
+  const postId = (value) => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n <= 0) throw new Error('id must be a positive whole number');
+    return n;
+  };
+  const restBase = (value) => {
+    const base = String(value || 'posts');
+    if (!/^[a-z0-9_-]{1,64}$/i.test(base)) throw new Error('post_type must be a REST base such as posts or pages');
+    return base;
+  };
   try {
     let result;
     switch (name) {
@@ -241,13 +253,13 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         result = await wp('/seo-meta-bridge/v1/status');
         break;
       case 'get_post_meta': {
-        // Use the standard /wp/v2/posts route — registered meta surfaces under .meta
-        const post = await wp(`/wp/v2/posts/${args.id}?context=edit`);
+        // Use the standard /wp/v2/posts route: registered meta surfaces under .meta
+        const post = await wp(`/wp/v2/posts/${postId(args.id)}?context=edit`);
         result = { id: post.id, link: post.link, title: post.title?.rendered, meta: post.meta };
         break;
       }
       case 'set_post_meta':
-        result = await wp(`/wp/v2/posts/${args.id}`, { method: 'POST', body: { meta: args.meta } });
+        result = await wp(`/wp/v2/posts/${postId(args.id)}`, { method: 'POST', body: { meta: args.meta } });
         break;
       case 'bulk_update':
         result = await wp('/seo-meta-bridge/v1/bulk', { method: 'POST', body: { items: args.items } });
@@ -258,7 +270,7 @@ server.setRequestHandler(CallToolRequestSchema, async (req) => {
         qs.set('page',     String(args.page ?? 1));
         qs.set('status',   args.status ?? 'publish');
         if (args.search) qs.set('search', args.search);
-        const route = (args.post_type === 'page') ? '/wp/v2/pages' : `/wp/v2/${args.post_type || 'posts'}`;
+        const route = (args.post_type === 'page') ? '/wp/v2/pages' : `/wp/v2/${restBase(args.post_type)}`;
         const posts = await wp(`${route}?${qs.toString()}`);
         result = posts.map(p => ({ id: p.id, slug: p.slug, title: p.title?.rendered, status: p.status, link: p.link }));
         break;

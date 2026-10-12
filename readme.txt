@@ -1,20 +1,36 @@
-=== Bulk SEO Meta Editor for AI Agents ===
+=== Bulk AI CLI Connector: Edit Pages, SEO and Schema with Claude, ChatGPT and MCP Agents ===
 Contributors: puneetindersingh
 Tags: yoast, rank-math, bulk-edit, meta-description, mcp
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 1.9.1
+Stable tag: 2.0.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Bulk edit Yoast SEO and Rank Math meta titles, descriptions and image alt text over the REST API. For AI agents, n8n and scripts.
+Let AI agents and scripts edit SEO titles, schema, redirects and page copy over the REST API. Elementor, Beaver, Yoast, Rank Math. With undo.
 
 == Description ==
+
+This plugin was called Bulk SEO Meta Editor for AI Agents up to version 1.9.1. Same plugin, same address, same REST routes, new name: it now edits page content as well as SEO fields.
 
 Bulk edit Yoast SEO or Rank Math meta from outside wp-admin. WordPress does not expose those fields over the REST API, so editing a meta title programmatically normally means WP-CLI, a custom plugin, or a premium SEO tier. This plugin adds a clean, authenticated REST surface instead, so AI agents (Claude, ChatGPT, Perplexity), automation tools (n8n, Zapier, Make) and headless workflows can read and rewrite SEO titles, meta descriptions, canonical URLs, robots directives, Open Graph and Twitter fields on up to 100 posts in a single HTTP call.
 
 Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases (`title`, `description`, `focus_kw`, ...) so you don't need to memorise Yoast vs Rank Math meta keys.
+
+= New in 2.0: page copy, redirects and API keys =
+
+Version 2.0 goes past SEO fields. The same REST API can now read and change the visible text of a page, wherever the site keeps it:
+
+* **Page builders**: Elementor (including Elementor 4 atomic widgets), Beaver Builder, SiteOrigin Page Builder, and text fields in Advanced Custom Fields. These keep a page in post meta, where the core REST API cannot reach it. The plugin lists every piece of text as a node and changes only the ones you name. Layout, styling and widgets it does not know are written back exactly as they were read.
+* **Gutenberg, classic editor, Divi and WPBakery**: read and replace the post content, or run a literal find and replace across it.
+* **Term descriptions**: category and product category introductions keep their headings, lists and tables.
+* **Undo for every edit**: each write stores the previous version first. `GET /content/backups` lists what can be restored and `POST /content/revert` puts it back. The newest ten are kept per page.
+* **Dry run and conflict check**: `dry_run` shows what would change and writes nothing. `base_hash` refuses a write when the page changed since it was read.
+* **Redirects**: `POST /redirect` adds a 301, 302, 307 or 410 rule. On a site that uses Rank Math's Redirections the rule goes into Rank Math itself. Elsewhere the plugin serves it.
+* **Copy a page**: `POST /clone` copies a page with its template, design meta and featured image into a new draft.
+* **Merchant listing fields**: fills in return policy, shipping details and brand on WooCommerce Product schema from one stored policy.
+* **API keys**: for sites where a security plugin or the host blocks application passwords. Made on **Tools > Agent API Keys**, shown once, stored only as a hash.
 
 = What's included =
 
@@ -31,6 +47,9 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 * **Post titles** (v1.9.0+): send `post_title` in a `/bulk` item to rename a post; the slug is never touched
 * **Sitemap refresh** (v1.9.0+): `POST /sitemap/flush` clears the Yoast or Rank Math sitemap cache after REST edits
 * **Invalid Product schema guard** (v1.9.0+): drops `Product` nodes that carry no `offers`, `review` or `aggregateRating`, the ones Search Console reports as invalid on quote-only WooCommerce catalogues. Disable with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false')`
+* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write
+* **Redirects, page copies and merchant listing fields** (v2.0.0+): see "New in 2.0" above
+* **API keys** (v2.0.0+): a second way to sign in, next to application passwords
 
 = REST endpoints =
 
@@ -43,6 +62,14 @@ All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-me
 * `POST /import`: apply updates from a CSV upload or JSON rows array
 * `GET /schema` (v1.6.0+): read back the custom JSON-LD schema stored on a post; add `kind=term&taxonomy=<slug>` for a term (v1.9.0+)
 * `POST /sitemap/flush` (v1.9.0+): clear the Yoast or Rank Math sitemap cache so the next sitemap request rebuilds from live data
+* `GET /content?id=N` (v2.0.0+): which builder owns the page and its text as nodes; add `kind=term&taxonomy=<slug>` for a term description
+* `POST /content` (v2.0.0+): change nodes with `updates: [{el, setting, value}]`, or send `post_content` for a page that keeps its text there
+* `POST /content/replace` (v2.0.0+): literal find and replace across the page's text
+* `GET /content/backups` and `POST /content/revert` (v2.0.0+): list and restore earlier versions
+* `POST /clone` (v2.0.0+): copy a page or post into a new draft
+* `GET`, `POST`, `DELETE /redirect` (v2.0.0+): list, add or remove redirect rules
+* `GET`, `POST`, `DELETE /merchant-policy` (v2.0.0+): the return policy and shipping details added to WooCommerce Product schema
+* `POST /register-key` (v2.0.0+): store the hash of an API key from your own signed-in browser session
 
 The standard WordPress REST route also works: `POST /wp/v2/posts/{id}` with a `meta` payload containing Yoast or Rank Math keys.
 
@@ -66,11 +93,13 @@ A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-seo-
 
 = Security =
 
-* Application Passwords (Basic Auth), HTTPS required in production
-* Per-post `edit_post` capability check on every write
+* Application Passwords (Basic Auth), HTTPS required in production. API keys (v2.0.0+) work over the REST API only, over HTTPS only, on this plugin's routes only unless made with the wider scope, and are stored as SHA-256 hashes
+* Per-post `edit_post` capability check on every read and write, `edit_term` for terms, `manage_options` for redirects and site-wide settings
+* The SEO plugin's and the page builder's own rules for who may edit are followed as well: Yoast and Rank Math role settings, Elementor's excluded roles, Beaver Builder's Builder Access setting
+* Page copy is always cleaned with the post content allowlist (`wp_kses_post`), whoever sends it. Scripts and event handlers are never stored
 * Meta keys are allowlisted to the active plugin's known fields
-* URL-shaped fields (canonical, og_image, twitter_image) sanitised through `esc_url_raw`
-* No new admin UI, no settings page, nothing to misconfigure
+* URL-shaped fields (canonical, og_image, twitter_image, link URLs, redirect destinations) sanitised through `esc_url_raw`
+* One admin screen, **Tools > Agent API Keys**, and only administrators can open it
 
 = Trademarks =
 
@@ -78,10 +107,10 @@ Yoast SEO is a trademark of Yoast BV. Rank Math is a trademark of RankMath. Clau
 
 == Installation ==
 
-1. Install from the WordPress.org plugin directory: **Plugins → Add New**, search for **Bulk SEO Meta Editor for AI Agents**. Or with WP-CLI: `wp plugin install bulk-seo-meta-editor-for-ai-agents --activate`. Or upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**
-2. Activate. There is no settings page: the REST API is live as soon as the plugin is active
-3. Set up an Application Password: **Users → Your Profile → Application Passwords → Add New**
-4. Test: `curl -u 'username:app pass' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`
+1. Install from the WordPress.org plugin directory: **Plugins → Add New**, search for **Bulk AI CLI Connector**. Or with WP-CLI: `wp plugin install bulk-seo-meta-editor-for-ai-agents --activate`. Or upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**
+2. Activate. The REST API is live as soon as the plugin is active
+3. Set up an Application Password: **Users → Your Profile → Application Passwords → Add New**. If your site blocks application passwords, make an API key instead under **Tools → Agent API Keys**
+4. Test: `curl -u 'username:app pass' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`, or with a key: `curl -H 'X-Bulkseme-Key: bsme_...' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`
 
 For the optional MCP server, install via npm: `npm install -g bulk-seo-meta-editor-mcp` and configure Claude Desktop / Claude Code with `WP_BASE_URL`, `WP_USER`, and `WP_APP_PASS` environment variables.
 
@@ -141,7 +170,37 @@ You shouldn't. They conflict with each other in the front-end (duplicate meta ta
 
 = Is it safe to install on production? =
 
-Yes. The plugin is read-only until something hits the REST endpoints, and writes are scoped to SEO meta keys, custom schema, image alt text and (only when you send it) the post title. It cannot edit post content, users, or any other table. Per-post permission checks prevent privilege escalation.
+Yes. The plugin does nothing until something calls the REST endpoints, and every call needs a signed-in user who could make the same change in wp-admin. SEO fields, schema, alt text and titles are checked per post. Since 2.0.0 page copy can be edited too: each write is cleaned with the post content allowlist, stores a backup first, and can be reverted. The plugin cannot create users, change settings outside its own, install anything, or run code that was sent to it.
+
+= Can an AI agent edit an Elementor or Beaver Builder page? =
+
+Yes, since 2.0.0. `GET /content?id=<page id>` returns the page's headings, paragraphs, button labels and list items as nodes, each with the element id and setting name it lives in. Send the ones you want changed to `POST /content` as `updates: [{"el": "...", "setting": "...", "value": "..."}]`. Only those values change. Add `"dry_run": true` to see the result without writing.
+
+= How do I undo an edit? =
+
+Every write through `/content` stores the previous version first and returns its id as `backup_ts`. `POST /content/revert` with the page `id` and that `ts` restores it, and the revert can itself be undone. `GET /content/backups?id=<page id>` lists the newest ten. A backup can only be restored onto the page it was taken from.
+
+= Who can edit page content through the API? =
+
+Only a user who could edit that page in wp-admin. The plugin checks `edit_post` on the page (or `edit_term` on the term) for every read and write. Where the page builder has its own rule it is followed as well: a role that Elementor excludes from its editor, or that Beaver Builder's Builder Access setting keeps out, is refused here too.
+
+= Can I send scripts or iframes in page copy? =
+
+No. Every value is cleaned with WordPress's post content allowlist (`wp_kses_post`) before it is stored, whoever sends it, administrators included. A site owner who needs the unfiltered behaviour WordPress gives administrators in the editor can switch it on with `add_filter('bulkseme_allow_unfiltered_html', '__return_true');`. Even then the caller must hold the `unfiltered_html` capability and the request must ask for it with `unsafe_html: 1`.
+
+= How do API keys work, and are they safe? =
+
+An administrator makes a key on **Tools > Agent API Keys**. It is shown once and only its SHA-256 hash is stored, so a copy of the database holds nothing that can be replayed. A key signs REST API requests in as the account that made it, with that account's capabilities, and is removed when that account is deleted. It is read only for REST API requests over HTTPS, so wp-login.php, wp-admin, admin-ajax and XML-RPC never see it.
+
+By default a key is accepted on this plugin's own routes and nowhere else. If a tool also needs WordPress's own REST routes (to list posts or upload media, for example), make the key with the wider scope. Such a key is as powerful as an application password for your account, so store it like a password. Revoke any key on the same screen. To switch key sign-in off entirely: `add_filter('bulkseme_api_key_auth_enabled', '__return_false');`.
+
+= How do redirects work? =
+
+`POST /redirect` with `from` (a path on your site), `to` (a path or a full URL) and `type` (301, 302, 307 or 410). If Rank Math's Redirections module is on, the rule is saved through Rank Math and shows in its own list. Otherwise the plugin stores the rule and serves it. Redirects need an administrator, and Rank Math's own Redirections capability when the rule goes through Rank Math.
+
+= What is left behind if I delete the plugin? =
+
+Deleting the plugin removes its API key hashes, so no way of signing in is left behind. Stored schema, redirect rules, the merchant policy and content backups are kept in the database, because a site may still want them, and they come back into use if the plugin is installed again.
 
 = Does it work with WooCommerce products? =
 
@@ -164,6 +223,27 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted, plus the plugin's own `schema` and `schema_mode` fields and, since 1.9.0, `post_title`. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 2.0.0 =
+* Renamed from "Bulk SEO Meta Editor for AI Agents" to "Bulk AI CLI Connector". The plugin address, folder, REST routes and stored data are unchanged.
+* New: page content. `GET /content` and `POST /content` read and edit the visible text of a page for Elementor (classic and Elementor 4 atomic widgets, heading level, link URLs and per-element custom CSS), Beaver Builder, SiteOrigin Page Builder (core text widgets and the SiteOrigin Widgets Bundle: editor, headline, button, call to action, accordion, tabs, hero, features, testimonials and image), the Accordions plugin and Advanced Custom Fields text fields, and the post content of Gutenberg, classic, Divi and WPBakery pages. `POST /content/replace` runs a literal find and replace. Add `kind=term&taxonomy=<slug>` for a term description, which keeps headings, lists and tables.
+* New: a backup before every content write, with `GET /content/backups` and `POST /content/revert`. Backups are kept in a hidden post type that nobody can read or edit outside these two routes, the newest ten per item, and a backup can only be restored onto the item it came from.
+* New: `dry_run` and `base_hash` on content writes.
+* New: `POST /clone` copies a page or post into a new draft with its template, design meta, featured image and terms. SEO fields are not copied.
+* New: `GET`, `POST` and `DELETE /redirect`. Rules go through Rank Math's Redirections when that module is on, otherwise the plugin stores and serves them.
+* New: `GET`, `POST` and `DELETE /merchant-policy`. Adds return policy, shipping details, brand and a price start date to WooCommerce Product schema that the SEO plugin left without them. Opt out with `add_filter('bulkseme_merchant_enrichment', '__return_false')`.
+* New: API keys. Made on Tools > Agent API Keys, shown once, stored as SHA-256 hashes, REST only, HTTPS only. Send a key in the `X-Bulkseme-Key` header or as the password of HTTP Basic auth. A key is accepted on this plugin's own routes only, unless it is made with the wider scope, which covers every REST route. A key is tied to the account that made it and is removed when that account is deleted. `POST /register-key` stores the hash of a key from an administrator's own browser session.
+* Security: content routes check `edit_post` or `edit_term` per item and follow the page builder's own access rules (Elementor's excluded roles, Beaver Builder's Builder Access). Every value is cleaned with `wp_kses_post`, administrators included. Storing unfiltered HTML needs the `bulkseme_allow_unfiltered_html` filter, the `unfiltered_html` capability and `unsafe_html: 1` in the request.
+* Security: redirects and merchant policy need `manage_options`. Redirects written through Rank Math also need its `rank_math_redirections` capability.
+* Security: posts of a type that has no edit screen and no REST route of its own are now out of reach of every route, including `/bulk`, `/export` and `/schema`. Before this, a user could rename such a record through `post_title` in `/bulk` if WordPress counted them as its author, and that included a privacy request they had filed themselves, whose title is the address the request acts on. Recommended update for every site.
+* Security: stored JSON-LD is limited to 128 KB and 5,000 values per post or term (`schema_too_large`), because it is read on every view of the page. Filters: `bulkseme_schema_max_bytes`, `bulkseme_schema_max_values`.
+* Security: on a site with neither Yoast SEO nor Rank Math, storing schema now needs `edit_others_posts` (Editor and above), in line with Yoast SEO's own default for schema settings. Filter: `bulkseme_user_can_edit_field_group`.
+* Fix: titles and descriptions that use replacement variables are stored intact. WordPress's general text cleaner removed anything that looked like a percent-encoded byte, so `%%category%%` was stored as `%tegory%%` and Rank Math's `%date%` as `te%`. The active SEO plugin's own text cleaner is now used. Post titles keep their percent signs too.
+* Fix: a merchant policy number that is not finite (for example `1e400`) is refused. It could not be printed as JSON and emptied the product schema block.
+* `/status` reports the new capabilities: `supports_content`, `supports_redirects`, `supports_api_key`, `supports_clone`, `builders` and more. Page builder version numbers, the redirect engine and the merchant policy summary are only shown to administrators. Filter: `bulkseme_status`.
+* MCP server 1.7.1: post ids and post type names are checked before they are used in a request path.
+* The plugin is now split into files under `includes/`. No setting, stored value or existing route changed name.
+* Deleting the plugin now removes its API key hashes, on every site of a network.
 
 = 1.9.1 =
 * Security: SEO fields registered on the core `wp/v2` routes are now returned in the `edit` context only. Before this, a plain `GET /wp/v2/posts/<id>` included them for anyone who could read the post, logged in or not, and that included the focus keyword, which is not printed anywhere on the page. Clients that read `meta` from a core route must add `?context=edit`. The bundled MCP server already does.
@@ -213,41 +293,41 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
   * `/status` now reports `supports_schema: true`.
 
 = 1.5.1 =
-* Internal — renamed all internal PHP function and define prefixes from `seo_meta_bridge_*` / `SEO_META_BRIDGE_*` to `bulkseme_*` / `BULKSEME_*` so the prefix derives directly from the plugin slug. No public REST surface changes — endpoints still live at `/wp-json/seo-meta-bridge/v1/*`. No migration required.
-* Internal — removed `if (!function_exists(...))` guards around the plugin's own helper functions per WordPress.org plugin guidelines. Unique prefixes prevent collisions; the guards were unnecessary and risked loading a same-named function from another plugin instead of ours.
-* Code clarity — added comments next to `update_option('wpseo_titles', ...)` and `update_option('rank-math-options-titles', ...)` documenting that those option keys belong to Yoast SEO and Rank Math respectively, not this plugin. We integrate WITH those plugins by reading and writing the exact keys they use; a custom-prefixed key would store data nowhere those plugins look.
+* Internal: renamed all internal PHP function and define prefixes from `seo_meta_bridge_*` / `SEO_META_BRIDGE_*` to `bulkseme_*` / `BULKSEME_*` so the prefix derives directly from the plugin slug. No public REST surface changes: endpoints still live at `/wp-json/seo-meta-bridge/v1/*`. No migration required.
+* Internal: removed `if (!function_exists(...))` guards around the plugin's own helper functions per WordPress.org plugin guidelines. Unique prefixes prevent collisions; the guards were unnecessary and risked loading a same-named function from another plugin instead of ours.
+* Code clarity: added comments next to `update_option('wpseo_titles', ...)` and `update_option('rank-math-options-titles', ...)` documenting that those option keys belong to Yoast SEO and Rank Math respectively, not this plugin. We integrate WITH those plugins by reading and writing the exact keys they use; a custom-prefixed key would store data nowhere those plugins look.
 
 = 1.5.0 =
-* **New — bulk update image alt text.** New endpoint `POST /seo-meta-bridge/v1/bulk-alts` accepts `{ items: [{ image_url, new_alt }, ...] }` (max 200/req) and updates `_wp_attachment_image_alt` on the matching media-library attachment. Resolves URLs via `attachment_url_to_postid()` with two fallbacks: strips `-WIDTHxHEIGHT.ext` size suffix (so a `-300x200.jpg` thumb still maps to its parent attachment), then strips any query string. Each row reports `status: ok | unchanged | skipped | error` plus `attachment_id`, `matched_via`, and `previous_alt` so callers can audit changes. Skipped rows include a hint when the URL doesn't resolve to a media-library item (typical for CDN-hosted or page-builder-hardcoded images). `/status` now reports `supports_alts: true`.
+* **New: bulk update image alt text.** New endpoint `POST /seo-meta-bridge/v1/bulk-alts` accepts `{ items: [{ image_url, new_alt }, ...] }` (max 200/req) and updates `_wp_attachment_image_alt` on the matching media-library attachment. Resolves URLs via `attachment_url_to_postid()` with two fallbacks: strips `-WIDTHxHEIGHT.ext` size suffix (so a `-300x200.jpg` thumb still maps to its parent attachment), then strips any query string. Each row reports `status: ok | unchanged | skipped | error` plus `attachment_id`, `matched_via`, and `previous_alt` so callers can audit changes. Skipped rows include a hint when the URL doesn't resolve to a media-library item (typical for CDN-hosted or page-builder-hardcoded images). `/status` now reports `supports_alts: true`.
 
 = 1.4.2 =
-* **Security — `/export` now filters by author for low-privilege roles.** Authors and Contributors (anyone with `edit_posts` but not `edit_others_posts`) calling `/export` previously received titles and SEO meta for every post and draft on the site, including drafts owned by other users. The endpoint now scopes the underlying `WP_Query` to the calling user's own authored posts when they lack `edit_others_posts`, matching the behaviour of the wp-admin Posts list. No change for Editors or Administrators — they continue to see all posts as before. Recommended upgrade for any site with multi-author setups.
+* **Security: `/export` now filters by author for low-privilege roles.** Authors and Contributors (anyone with `edit_posts` but not `edit_others_posts`) calling `/export` previously received titles and SEO meta for every post and draft on the site, including drafts owned by other users. The endpoint now scopes the underlying `WP_Query` to the calling user's own authored posts when they lack `edit_others_posts`, matching the behaviour of the wp-admin Posts list. No change for Editors or Administrators: they continue to see all posts as before. Recommended upgrade for any site with multi-author setups.
 
 = 1.4.1 =
-* **Bug fix — term meta updates now invalidate Yoast's Indexable cache.** Previously, writing to `wpseo_taxonomy_meta` via `/bulk` (kind=term) updated the option correctly and `/export` read the new value back, but the FRONT-END kept rendering the old meta description because Yoast 14+ caches rendered SEO meta in the `yoast_indexable` table and our update didn't fire the hooks Yoast's Indexable_Term_Watcher listens on. After updating the term option, the plugin now also fires `do_action('wpseo_save_taxonomy_meta', $term_id, $taxonomy)` and the standard `do_action('edited_term', ...)`, and as a final safety net deletes the term's row in the Yoast indexable repository so Yoast rebuilds it on the next request. No-op when Yoast isn't installed (Rank Math path was unaffected and unchanged).
+* **Bug fix: term meta updates now invalidate Yoast's Indexable cache.** Previously, writing to `wpseo_taxonomy_meta` via `/bulk` (kind=term) updated the option correctly and `/export` read the new value back, but the FRONT-END kept rendering the old meta description because Yoast 14+ caches rendered SEO meta in the `yoast_indexable` table and our update didn't fire the hooks Yoast's Indexable_Term_Watcher listens on. After updating the term option, the plugin now also fires `do_action('wpseo_save_taxonomy_meta', $term_id, $taxonomy)` and the standard `do_action('edited_term', ...)`, and as a final safety net deletes the term's row in the Yoast indexable repository so Yoast rebuilds it on the next request. No-op when Yoast isn't installed (Rank Math path was unaffected and unchanged).
 
 = 1.4.0 =
-* CPT archive page support — write SEO meta to custom-post-type archive pages (e.g. `/challenges/`, `/news/`) for any CPT registered with `has_archive=true`. Yoast: stored in `wpseo_titles` option (`title-ptarchive-{ptype}`, `metadesc-ptarchive-{ptype}`); Rank Math: stored in `rank-math-options-titles` (`pt_{ptype}_archive_title`, `pt_{ptype}_archive_description`).
-* Global SEO scopes — write meta for `author_archive`, `date_archive`, `search`, `p404`, `home` (latest-posts mode) via a single registry. New scopes can be added in one place without touching dispatch code.
+* CPT archive page support: write SEO meta to custom-post-type archive pages (e.g. `/challenges/`, `/news/`) for any CPT registered with `has_archive=true`. Yoast: stored in `wpseo_titles` option (`title-ptarchive-{ptype}`, `metadesc-ptarchive-{ptype}`); Rank Math: stored in `rank-math-options-titles` (`pt_{ptype}_archive_title`, `pt_{ptype}_archive_description`).
+* Global SEO scopes: write meta for `author_archive`, `date_archive`, `search`, `p404`, `home` (latest-posts mode) via a single registry. New scopes can be added in one place without touching dispatch code.
 * `/status` reports `supports_archives`, `supports_globals`, `archive_fields`, and `global_scopes` (alias map per active scope).
-* `/export?include_archives=1` appends one synthetic row per CPT-with-archive (id=0, kind=cpt_archive). Backwards compatible — pre-1.4 consumers ignore unknown kind values.
+* `/export?include_archives=1` appends one synthetic row per CPT-with-archive (id=0, kind=cpt_archive). Backwards compatible: pre-1.4 consumers ignore unknown kind values.
 * `/bulk` accepts the new kinds:
   * `{ id: 0, kind: "cpt_archive", post_type: "challenges", meta: {...} }`
   * `{ kind: "author_archive" | "date_archive" | "search" | "p404" | "home", meta: {...} }`
 * `/import` reads cpt_archive and global rows from CSV for round-trip edits.
-* Permission: cpt_archive requires the post type's `edit_posts` cap; global scopes require `manage_options` (admin-only — they affect site-wide SEO settings).
+* Permission: cpt_archive requires the post type's `edit_posts` cap; global scopes require `manage_options` (admin-only: they affect site-wide SEO settings).
 
 = 1.3.0 =
-* **Taxonomy term archives are now editable** — categories, tags, and any custom taxonomy archive (e.g. WooCommerce `product_cat`, `product_tag`, theme-registered taxonomies). Previously the plugin only handled posts, pages and CPTs; term archive SEO meta had to be edited in wp-admin one term at a time.
+* **Taxonomy term archives are now editable**: categories, tags, and any custom taxonomy archive (e.g. WooCommerce `product_cat`, `product_tag`, theme-registered taxonomies). Previously the plugin only handled posts, pages and CPTs; term archive SEO meta had to be edited in wp-admin one term at a time.
 * `/status` now reports `supports_terms: true` and a `term_fields` alias map so clients can detect the capability.
-* `/export?include_terms=1` appends term archive rows to the CSV. New trailing `kind` and `taxonomy` columns flag term rows; post rows have `kind=post` with an empty `taxonomy`. Filter to specific taxonomies with `?taxonomy=category,product_cat`. Backwards compatible — v1.2.x clients that ignore the trailing columns see the same column shape.
+* `/export?include_terms=1` appends term archive rows to the CSV. New trailing `kind` and `taxonomy` columns flag term rows; post rows have `kind=post` with an empty `taxonomy`. Filter to specific taxonomies with `?taxonomy=category,product_cat`. Backwards compatible: v1.2.x clients that ignore the trailing columns see the same column shape.
 * `/export?post_type=any` now correctly returns all public post types (previously needed an explicit comma list of CPTs).
 * `/bulk` accepts term updates via `{ id: <term_id>, kind: "term", taxonomy: "category", meta: {...} }`. Existing post-update payloads are unchanged.
 * `/import` reads `kind` and `taxonomy` columns from CSV uploads so a mixed posts+terms export round-trips cleanly.
 * Yoast term meta is stored in the `wpseo_taxonomy_meta` option (read-modify-write per call). Rank Math term meta uses `wp_termmeta`. Per-taxonomy `edit_terms` capability is enforced on every write.
 
 = 1.2.6 =
-* `/export` now includes `title_chars` and `desc_chars` helper columns by default — character counts for the SEO title and description so you can spot over-limit cells at a glance when editing in Excel/LibreOffice/Google Sheets. Pass `?lengths=0` to get the original column shape. `/import` ignores these columns, so exports round-trip unchanged. Counts are static at export time.
+* `/export` now includes `title_chars` and `desc_chars` helper columns by default: character counts for the SEO title and description so you can spot over-limit cells at a glance when editing in Excel/LibreOffice/Google Sheets. Pass `?lengths=0` to get the original column shape. `/import` ignores these columns, so exports round-trip unchanged. Counts are static at export time.
 * MCP `export_csv` tool gains an `include_lengths` boolean (default true) that maps to the new query param.
 
 = 1.2.5 =
@@ -278,6 +358,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.0.0 =
+Adds page content editing (Elementor, Beaver Builder, SiteOrigin, ACF, block and classic pages) with undo, redirects, page copies and API keys. Security: records without an edit screen, such as privacy requests, can no longer be renamed through /bulk.
 
 = 1.9.1 =
 Security release. SEO fields can no longer be read through the core REST route without edit rights, the SEO plugin's own role rules apply to every write, and CSV exports are safe to open in a spreadsheet. Reading meta from wp/v2 now needs ?context=edit.

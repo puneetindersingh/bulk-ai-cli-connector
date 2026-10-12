@@ -1,7 +1,7 @@
 {
   "name": "bulk-seo-meta-editor-mcp",
-  "version": "1.7.0",
-  "description": "Bulk edit Yoast SEO and Rank Math meta on WordPress from Claude Code or Claude Desktop. MCP server for the Bulk SEO Meta Editor plugin: bulk update titles and descriptions, image alt text, JSON-LD schema, CSV import and export, taxonomy and CPT archives.",
+  "version": "1.7.1",
+  "description": "Bulk edit Yoast SEO and Rank Math meta on WordPress from Claude Code or Claude Desktop. MCP server for the Bulk AI CLI Connector plugin (formerly Bulk SEO Meta Editor): bulk update titles and descriptions, image alt text, JSON-LD schema, CSV import and export, taxonomy and CPT archives.",
   "type": "module",
   "bin": {
     "bulk-seo-meta-editor-mcp": "index.js"

@@ -1,6 +1,6 @@
 # bulk-seo-meta-editor-mcp
 
-MCP (Model Context Protocol) server companion for the **Bulk SEO Meta Editor for AI Agents** WordPress plugin. Lets Claude Code / Claude Desktop read and bulk-update Yoast SEO or Rank Math meta tags on WordPress sites with a single tool call.
+MCP (Model Context Protocol) server companion for the **Bulk AI CLI Connector** WordPress plugin (formerly Bulk SEO Meta Editor for AI Agents). Lets Claude Code / Claude Desktop read and bulk-update Yoast SEO or Rank Math meta tags on WordPress sites with a single tool call.
 
 > **Requires the WordPress plugin** to be installed and activated on the target site. Get it from the [WordPress.org Plugin Directory](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/) (after approval) or [GitHub](https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents).
 

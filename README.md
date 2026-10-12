@@ -1,4 +1,6 @@
-# Bulk SEO Meta Editor for AI Agents
+# Bulk AI CLI Connector: Edit Pages, SEO and Schema with Claude, ChatGPT and MCP Agents
+
+Formerly Bulk SEO Meta Editor for AI Agents. Same plugin, same WordPress.org address.
 
 [![WordPress Plugin Version](https://img.shields.io/wordpress/plugin/v/bulk-seo-meta-editor-for-ai-agents?logo=wordpress&color=9B51E0)](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)
 [![WordPress Plugin Downloads](https://img.shields.io/wordpress/plugin/dt/bulk-seo-meta-editor-for-ai-agents?color=9B51E0)](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)
@@ -36,7 +38,7 @@ WordPress doesn't expose Yoast or Rank Math meta fields via the REST API by defa
 
 ### Option 1: WordPress.org directory (recommended)
 
-WP admin, **Plugins → Add New**, search for **Bulk SEO Meta Editor for AI Agents**, then Install and Activate.
+WP admin, **Plugins → Add New**, search for **Bulk AI CLI Connector**, then Install and Activate.
 Updates then arrive through the normal WordPress update channel.
 
 ### Option 2: WP-CLI
@@ -53,7 +55,7 @@ wp plugin install bulk-seo-meta-editor-for-ai-agents --activate
 
 ### Option 4: must-use plugin (auto-active, for agency fleets)
 
-Drop `bulk-seo-meta-editor-for-ai-agents.php` into `wp-content/mu-plugins/`. No activation required and it cannot be switched off from the admin.
+Copy the whole plugin folder into `wp-content/mu-plugins/` and add a one-line loader file next to it, for example `wp-content/mu-plugins/load-bulk-seo.php` containing `<?php require __DIR__ . '/bulk-seo-meta-editor-for-ai-agents/bulk-seo-meta-editor-for-ai-agents.php';`. Since 2.0.0 the plugin is more than one file, so the main file on its own is not enough. No activation required and it cannot be switched off from the admin.
 
 ## Authentication
 
@@ -64,6 +66,18 @@ Uses standard WordPress Application Passwords. **HTTPS required in production.**
 3. Copy the generated password (24 chars, shown once)
 
 Use it as Basic Auth: `username:application password`
+
+### API keys (2.0.0+)
+
+For sites where a security plugin or the host blocks application passwords. An administrator makes a key under **Tools → Agent API Keys**. It is shown once and only its SHA-256 hash is stored.
+
+    curl -H 'X-Bulkseme-Key: bsme_...' https://example.com/wp-json/seo-meta-bridge/v1/status
+    curl -u 'username:bsme_...'        https://example.com/wp-json/seo-meta-bridge/v1/status
+
+- A key signs requests in as the account that made it and is removed when that account is deleted.
+- It is read for REST API requests only, over HTTPS only.
+- By default it is accepted on this plugin's routes only. Choose the wider scope when the tool also needs WordPress's own REST routes; such a key is as powerful as an application password.
+- Switch key sign-in off with `add_filter('bulkseme_api_key_auth_enabled', '__return_false');`.
 
 ### Local development over HTTP
 
@@ -185,6 +199,44 @@ Read it back with `GET /wp-json/seo-meta-bridge/v1/schema?id=123` (returns the d
 
 Clears the Rank Math and Yoast sitemap caches so the next sitemap request rebuilds from live data. Useful after a batch of robots or slug edits over REST, which neither plugin notices on its own. Needs `edit_others_posts`. Response: `{ "ok": true, "flushed": ["yoast"] }`.
 
+### Page content (2.0.0+)
+
+`GET /wp-json/seo-meta-bridge/v1/content?id=123` tells you which builder owns the page and returns its text as nodes:
+
+    { "id": 123, "builder": "elementor", "data_hash": "...", "nodes": [
+        { "el": "3f9a21c", "widget": "heading", "setting": "title", "text": "Old heading", "html": false },
+        { "el": "7bc0d1e", "widget": "text-editor", "setting": "editor", "text": "<p>Old copy</p>", "html": true } ] }
+
+Change the ones you name and nothing else:
+
+    POST /wp-json/seo-meta-bridge/v1/content
+    { "id": 123, "base_hash": "...", "updates": [ { "el": "3f9a21c", "setting": "title", "value": "New heading" } ] }
+
+- **Builders with nodes:** Elementor (classic and atomic widgets, heading level, link URLs), Beaver Builder, SiteOrigin Page Builder, the Accordions plugin, Advanced Custom Fields text fields.
+- **Pages that keep their text in post content** (Gutenberg, classic, Divi, WPBakery): send `"post_content": "..."` instead of `updates`.
+- **Term descriptions:** add `"kind": "term", "taxonomy": "product_cat"` and send `"description"`.
+- `"dry_run": true` reports what would change and writes nothing. `base_hash` refuses the write if the page changed since you read it.
+- Every value is cleaned with `wp_kses_post`. Every write stores a backup first and returns its id as `backup_ts`.
+- `POST /content/replace { "id", "find", "replace" }` runs a literal find and replace across the page's text.
+- `GET /content/backups?id=123` lists the newest ten backups. `POST /content/revert { "id", "ts" }` restores one.
+
+The caller needs `edit_post` on the page (`edit_term` for a term), and where the page builder has its own access rule (Elementor's excluded roles, Beaver Builder's Builder Access), that rule too.
+
+### `POST /wp-json/seo-meta-bridge/v1/clone` (2.0.0+)
+
+`{ "source_id": 123, "title": "Copy of services", "slug": "services-copy", "status": "draft" }` copies a page or post into a new draft with its template, design meta, featured image and terms. SEO fields are not copied. Needs `edit_post` on the source, the right to create posts of that type, and `unfiltered_html`.
+
+### `/wp-json/seo-meta-bridge/v1/redirect` (2.0.0+)
+
+- `POST { "from": "/old-page/", "to": "/new-page/", "type": 301 }` adds or updates a rule. `type` is 301, 302, 307 or 410.
+- `GET` lists the rules. `DELETE { "from": "/old-page/" }` removes one.
+- With Rank Math's Redirections module on, rules are saved through Rank Math and show in its own list. Otherwise the plugin stores and serves them.
+- Needs `manage_options`, and Rank Math's `rank_math_redirections` capability for rules that go through Rank Math.
+
+### `/wp-json/seo-meta-bridge/v1/merchant-policy` (2.0.0+)
+
+`POST { "return_policy": { ... }, "shipping": { ... } }` stores one return policy and shipping description. On WooCommerce product pages the plugin then adds `hasMerchantReturnPolicy`, `shippingDetails`, `brand` and a price start date to the Product schema your SEO plugin prints, where they are missing. `GET` shows what is stored and what would be printed. Needs `manage_options`.
+
 ## MCP server (Claude Code / Claude Desktop)
 
 A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
@@ -250,12 +302,15 @@ Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤
 
 ## Security model
 
-- Application Passwords transmit as Basic Auth, so **HTTPS is required**.
-- Per-object capability check on every write (not just `edit_posts`): `edit_post` for posts and attachments, `edit_term` for terms, `manage_options` for archive and global settings.
+- Application Passwords transmit as Basic Auth, so **HTTPS is required**. API keys are refused without it.
+- Per-object capability check on every read and write (not just `edit_posts`): `edit_post` for posts and attachments, `edit_term` for terms, `manage_options` for archive and global settings, redirects and the merchant policy.
+- The SEO plugin's and the page builder's own rules for who may edit are followed as well.
+- Posts of a type with no edit screen and no REST route of its own (privacy requests, caches, the plugin's own backups) cannot be reached at all.
+- Page copy is cleaned with `wp_kses_post` for every caller. A backup is stored before every content write and can only be restored onto the page it came from.
 - Meta keys are allowlisted to the active plugin's known fields (plus the plugin's own `schema`, `schema_mode` and `post_title`). Arbitrary postmeta writes are rejected.
 - Stored schema refuses raw `<` or `>` on write and strips them again on output; the standalone block is additionally encoded with `JSON_HEX_TAG` and `JSON_HEX_AMP`.
 - URL-shaped fields are run through `esc_url_raw` before save.
-- No new admin UI; nothing to misconfigure.
+- One admin screen, **Tools → Agent API Keys**, for administrators only.
 
 ## Troubleshooting
 
