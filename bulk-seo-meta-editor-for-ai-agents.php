@@ -3,7 +3,7 @@
  * Plugin Name: Bulk SEO Meta Editor for AI Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents
  * Description: Bulk-update Yoast SEO or Rank Math meta tags via REST API. Designed for AI agents (Claude, ChatGPT, Perplexity) and automation scripts. Auto-detects the active SEO plugin. Supports posts, pages, custom post types, taxonomy term archives (categories, tags, custom taxonomies), and CPT archive pages. Includes CSV import/export and a bundled MCP server for one-command Claude Code / Claude Desktop integration.
- * Version: 1.9.0
+ * Version: 1.9.1
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -13,7 +13,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Keep in sync with the `Version:` header line above on every release.
-define('BULKSEME_VERSION', '1.9.0');
+define('BULKSEME_VERSION', '1.9.1');
 
 add_action('init', function () {
 
@@ -57,6 +57,11 @@ add_action('init', function () {
     ];
 
     // Per-post permission check shared by both groups.
+    // Deliberately only "can edit this post". The SEO plugin's own role rule is NOT
+    // applied here: the block editor sends every registered meta key back on save,
+    // changed or not, and core refuses the whole save when an auth_callback denies a
+    // key that has no stored row yet. bulkseme_rest_pre_insert_guard() applies the
+    // role rule instead, and only to values that actually change.
     $auth_callback = function ($allowed, $meta_key, $object_id, $user_id) {
         return user_can($user_id, 'edit_post', $object_id);
     };
@@ -77,17 +82,26 @@ add_action('init', function () {
             'auth_callback' => $auth_callback,
         ];
 
+        // context => edit: core only returns these fields for ?context=edit, which it
+        // allows only to users who can edit the post. Without it, wp/v2 would hand the
+        // focus keyword and the other SEO fields to anyone who can read the post,
+        // logged in or not.
         if ($type === 'array') {
             // Rank Math robots arrays — stored as serialized string[] in the
             // database, exposed in REST as a JSON array of strings.
             $args['show_in_rest'] = [
                 'schema' => [
-                    'type'  => 'array',
-                    'items' => ['type' => 'string'],
+                    'type'    => 'array',
+                    'items'   => ['type' => 'string'],
+                    'context' => ['edit'],
                 ],
             ];
         } else {
-            $args['show_in_rest'] = true;
+            $args['show_in_rest'] = [
+                'schema' => [
+                    'context' => ['edit'],
+                ],
+            ];
         }
 
         if (in_array($key, $url_keys, true)) {
@@ -110,6 +124,9 @@ add_action('init', function () {
 
     // Register against every public post type — covers post, page, product, CPTs.
     $post_types = get_post_types(['public' => true], 'names');
+    foreach ($post_types as $post_type) {
+        add_filter("rest_pre_insert_{$post_type}", 'bulkseme_rest_pre_insert_guard', 10, 2);
+    }
 
     foreach ($post_types as $post_type) {
         if ($yoast_active) {
@@ -135,7 +152,7 @@ add_action('init', function () {
             foreach ($pt_taxonomies as $taxonomy) {
                 $key = 'rank_math_primary_' . $taxonomy;
                 register_post_meta($post_type, $key, [
-                    'show_in_rest'  => true,
+                    'show_in_rest'  => ['schema' => ['context' => ['edit']]],
                     'single'        => true,
                     'type'          => 'integer',
                     'auth_callback' => $auth_callback,
@@ -207,6 +224,14 @@ function bulkseme_csv_line($cells) {
     $out = [];
     foreach ($cells as $cell) {
         $cell = (string) $cell;
+        // Spreadsheet formula injection: Excel, Google Sheets and LibreOffice run a
+        // cell that starts with = + - @ (or a tab or carriage return) as a formula.
+        // One leading apostrophe makes them show it as text. A cell that already
+        // starts with apostrophes before such a character gets one more, so
+        // bulkseme_csv_unguard() can remove exactly one and a round trip is lossless.
+        if (preg_match('/^\'*[=+\-@\t\r]/', $cell)) {
+            $cell = "'" . $cell;
+        }
         if (preg_match('/[",\r\n]/', $cell)) {
             $cell = '"' . str_replace('"', '""', $cell) . '"';
         }
@@ -214,6 +239,199 @@ function bulkseme_csv_line($cells) {
     }
     // RFC 4180: CRLF terminators so multi-line cells parse correctly in Excel/Sheets/LibreOffice.
     return implode(',', $out) . "\r\n";
+}
+
+/**
+ * Inverse of the formula guard in bulkseme_csv_line(): remove the one apostrophe
+ * /export put in front of a cell that starts with = + - @, a tab or a carriage
+ * return. Used by /import only, so a CSV round trip gives back the stored value.
+ * Anything that is not a guarded string is returned untouched.
+ */
+function bulkseme_csv_unguard($cell) {
+    if (is_string($cell) && preg_match('/^\'+[=+\-@\t\r]/', $cell)) {
+        return substr($cell, 1);
+    }
+    return $cell;
+}
+
+/**
+ * Turn one incoming value into text, or return null when it is not text-like.
+ * Strings pass through, JSON null clears the field, booleans and finite numbers
+ * are cast. Arrays and objects are refused: they are never cast, because a list
+ * stored where the SEO plugin expects text bypasses the text sanitiser and can
+ * fatal a string function further down.
+ */
+function bulkseme_scalar_text($value) {
+    if (is_string($value)) {
+        return $value;
+    }
+    if ($value === null) {
+        return '';
+    }
+    if (is_bool($value)) {
+        return $value ? '1' : '0';
+    }
+    if (is_int($value) || (is_float($value) && is_finite($value))) {
+        return (string) $value;
+    }
+    return null;
+}
+
+/**
+ * Which group of SEO settings a meta key belongs to, in the terms Yoast SEO and
+ * Rank Math use for their own role rules: 'advanced' (canonical URL, robots
+ * flags, breadcrumb title), 'social' (Open Graph and Twitter fields) or
+ * 'general' (title, description, focus keyword, primary term).
+ */
+function bulkseme_field_group($key) {
+    $key = (string) $key;
+    if (preg_match('/canonical|robots|noindex|nofollow|bctitle|breadcrumb_title/', $key)) {
+        return 'advanced';
+    }
+    if (preg_match('/opengraph|facebook|twitter/', $key)) {
+        return 'social';
+    }
+    return 'general';
+}
+
+/**
+ * Whether a user may edit one group of SEO settings ('general', 'advanced',
+ * 'social' or 'schema') under the ACTIVE SEO plugin's own role rules. This runs
+ * on top of the per-item edit_post / edit_term check, never instead of it.
+ *
+ * Yoast SEO: with its "Security: no advanced or schema settings for authors"
+ * setting on (the default), only users with wpseo_edit_advanced_metadata see
+ * the Advanced and Schema tabs of its metabox. Rank Math: its Role Manager
+ * capabilities rank_math_onpage_general / _advanced / _social / _snippet.
+ * The 'site' group is the site-wide settings (archive and global titles):
+ * wpseo_manage_options on Yoast, rank_math_titles on Rank Math. On multisite
+ * Yoast can reserve that for super admins, and both plugins let a site owner
+ * take it away from a role, so manage_options alone is not enough.
+ * A caller of this API gets exactly what the same user gets in wp-admin.
+ * With no SEO plugin active there is no extra rule.
+ */
+function bulkseme_user_can_seo_group($group, $user_id = 0) {
+    $user_id = $user_id ? (int) $user_id : get_current_user_id();
+    $plugin  = bulkseme_active_keys()['plugin'];
+    if (!$plugin && (defined('WPSEO_VERSION') || class_exists('WPSEO_Options'))) {
+        $plugin = 'yoast';
+    }
+    $allowed = true;
+    if ($plugin === 'yoast') {
+        if ($group === 'site') {
+            $allowed = user_can($user_id, 'wpseo_manage_options');
+        } elseif (in_array($group, ['advanced', 'schema'], true)
+            && class_exists('WPSEO_Options') && WPSEO_Options::get('disableadvanced_meta', true)) {
+            // Same test as WPSEO_Capability_Utils::current_user_can().
+            $allowed = user_can($user_id, 'wpseo_manage_options') || user_can($user_id, 'wpseo_edit_advanced_metadata');
+        }
+    } elseif ($plugin === 'rankmath') {
+        $caps = [
+            'general'  => 'rank_math_onpage_general',
+            'advanced' => 'rank_math_onpage_advanced',
+            'social'   => 'rank_math_onpage_social',
+            'schema'   => 'rank_math_onpage_snippet',
+            'site'     => 'rank_math_titles',
+        ];
+        $allowed = isset($caps[$group]) ? user_can($user_id, $caps[$group]) : true;
+    }
+    /**
+     * Filters whether a user may edit one group of SEO settings through this plugin.
+     *
+     * @param bool        $allowed Result of the active SEO plugin's own role rule.
+     * @param string      $group   general, advanced, social, schema or site.
+     * @param int         $user_id User being checked.
+     * @param string|null $plugin  yoast, rankmath or null.
+     */
+    return (bool) apply_filters('bulkseme_user_can_edit_field_group', $allowed, $group, $user_id, $plugin);
+}
+
+/**
+ * Core REST (wp/v2) guard for the SEO meta keys this plugin registers there.
+ *
+ * Applies the active SEO plugin's own role rule (bulkseme_user_can_seo_group())
+ * before anything is saved. It is done here and not in the keys' auth_callback
+ * for two reasons. Yoast SEO grants edit_post_meta for every _yoast_wpseo_ key
+ * to anyone who can edit the post (its allow_custom_field_edits() filter), which
+ * overrides an auth_callback. And the block editor sends every registered meta
+ * key back on save, changed or not, so the rule may only bite on a real change:
+ * a value equal to what the REST API currently returns for that key (including
+ * the default for a key with no stored row) is let through.
+ */
+function bulkseme_rest_pre_insert_guard($prepared_post, $request) {
+    if (is_wp_error($prepared_post)) {
+        return $prepared_post;
+    }
+    $meta = $request['meta'];
+    if (!is_array($meta) || !$meta) {
+        return $prepared_post;
+    }
+    $post_id = isset($prepared_post->ID) ? (int) $prepared_post->ID : 0;
+    $current = null;
+    foreach ($meta as $key => $value) {
+        $key = (string) $key;
+        if (strpos($key, '_yoast_wpseo_') !== 0 && strpos($key, 'rank_math_') !== 0) {
+            continue;
+        }
+        if (bulkseme_user_can_seo_group(bulkseme_field_group($key))) {
+            continue;
+        }
+        // Not a change: the value the REST API returns for this key right now.
+        if ($post_id && $current === null && class_exists('WP_REST_Post_Meta_Fields')) {
+            $fields  = new WP_REST_Post_Meta_Fields(get_post_type($post_id));
+            $current = (array) $fields->get_value($post_id, $request);
+        }
+        if ($post_id && is_array($current) && array_key_exists($key, $current)
+            && bulkseme_same_value($current[$key], $value)) {
+            continue;
+        }
+        // Not a change either: an empty value on a post that does not exist yet.
+        if (!$post_id && ($value === null || $value === '' || $value === [] || $value === 0 || $value === false)) {
+            continue;
+        }
+        return new WP_Error(
+            'bulkseme_forbidden_field',
+            /* translators: %s: meta key name. */
+            sprintf(__('Your role may not change the SEO field %s on this site.', 'bulk-seo-meta-editor-for-ai-agents'), $key),
+            ['status' => 403]
+        );
+    }
+    return $prepared_post;
+}
+
+/**
+ * Loose "same value" test for two meta values as they travel through REST:
+ * lists compare by content, everything else as text, so 0 and "0" match and
+ * null matches an empty string.
+ */
+function bulkseme_same_value($a, $b) {
+    if (is_array($a) || is_array($b)) {
+        return is_array($a) && is_array($b) && wp_json_encode($a) === wp_json_encode($b);
+    }
+    if (is_object($a) || is_object($b)) {
+        return false;
+    }
+    return (string) $a === (string) $b;
+}
+
+/**
+ * Sanitise one of the two Rank Math fields that are lists by design
+ * (rank_math_robots, rank_math_advanced_robots). Keeps text-like entries only.
+ */
+function bulkseme_clean_list($value) {
+    $clean = [];
+    foreach ((array) $value as $k => $v) {
+        $v = bulkseme_scalar_text($v);
+        if ($v === null) {
+            continue;
+        }
+        if (is_int($k)) {
+            $clean[] = sanitize_text_field($v);
+        } else {
+            $clean[sanitize_key((string) $k)] = sanitize_text_field($v);
+        }
+    }
+    return $clean;
 }
 
 /**
@@ -371,6 +589,13 @@ function bulkseme_apply_term_update($term_id, $taxonomy, $meta) {
     // the no_seo_plugin check and the Yoast/Rank Math allowlist below. The
     // per-term edit_term check above already gates them.
     $schema_errors = [];
+    $may_schema    = bulkseme_user_can_seo_group('schema');
+    foreach (['schema', '_bulkseme_schema_jsonld', 'schema_mode', '_bulkseme_schema_mode'] as $schema_key) {
+        if (!$may_schema && array_key_exists($schema_key, $meta)) {
+            $schema_errors[] = "forbidden_field:$schema_key";
+            unset($meta[$schema_key]);
+        }
+    }
     foreach (['schema', '_bulkseme_schema_jsonld'] as $schema_key) {
         if (array_key_exists($schema_key, $meta)) {
             $res = bulkseme_store_term_schema((int) $term->term_id, $meta[$schema_key]);
@@ -410,10 +635,19 @@ function bulkseme_apply_term_update($term_id, $taxonomy, $meta) {
             $errors[] = "unknown_or_disallowed_key:$key";
             continue;
         }
-        if (in_array($key, $url_keys, true)) {
-            $value = esc_url_raw($value);
-        } elseif (is_string($value)) {
-            $value = sanitize_text_field($value);
+        if (!bulkseme_user_can_seo_group(bulkseme_field_group($key))) {
+            $errors[] = "forbidden_field:$key";
+            continue;
+        }
+        if (is_array($value) && $key === 'rank_math_robots') {
+            $value = bulkseme_clean_list($value);
+        } else {
+            $value = bulkseme_scalar_text($value);
+            if ($value === null) {
+                $errors[] = "invalid_value_type:$key";
+                continue;
+            }
+            $value = in_array($key, $url_keys, true) ? esc_url_raw($value) : sanitize_text_field($value);
         }
         bulkseme_term_set_value($term_id, $taxonomy, $key, $value, $active['plugin']);
     }
@@ -639,7 +873,7 @@ function bulkseme_apply_global_update($scope, $meta) {
     if (!isset($scopes[$scope])) {
         return ['ok' => false, 'errors' => ['unknown_scope']];
     }
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can('manage_options') || !bulkseme_user_can_seo_group('site')) {
         return ['ok' => false, 'errors' => ['forbidden']];
     }
     $active = bulkseme_global_active_keys($scope);
@@ -658,9 +892,12 @@ function bulkseme_apply_global_update($scope, $meta) {
             $errors[] = "unknown_or_disallowed_key:$key";
             continue;
         }
-        if (is_string($value)) {
-            $value = sanitize_text_field($value);
+        $value = bulkseme_scalar_text($value);
+        if ($value === null) {
+            $errors[] = "invalid_value_type:$key";
+            continue;
         }
+        $value = sanitize_text_field($value);
         if (!bulkseme_titles_set($active['plugin'], $key, $value)) {
             $errors[] = "write_failed:$key";
         }
@@ -683,7 +920,7 @@ function bulkseme_apply_archive_update($post_type, $meta) {
     if (!$pt || empty($pt->has_archive)) {
         return ['ok' => false, 'errors' => ['post_type_has_no_archive']];
     }
-    if (!current_user_can('manage_options')) {
+    if (!current_user_can('manage_options') || !bulkseme_user_can_seo_group('site')) {
         return ['ok' => false, 'errors' => ['forbidden']];
     }
     $active = bulkseme_active_archive_keys();
@@ -702,9 +939,12 @@ function bulkseme_apply_archive_update($post_type, $meta) {
             $errors[] = "unknown_or_disallowed_key:$key";
             continue;
         }
-        if (is_string($value)) {
-            $value = sanitize_text_field($value);
+        $value = bulkseme_scalar_text($value);
+        if ($value === null) {
+            $errors[] = "invalid_value_type:$key";
+            continue;
         }
+        $value = sanitize_text_field($value);
         bulkseme_archive_set_value($post_type, $key, $value, $active['plugin']);
     }
     return ['ok' => empty($errors), 'errors' => $errors];
@@ -735,6 +975,11 @@ function bulkseme_apply_update($post_id, $meta) {
         // SEO plugin (they ride that plugin's schema graph at output time), so they
         // are handled before the Yoast/Rank Math allowlist below. See the
         // "Custom JSON-LD schema" section lower in this file.
+        if (in_array($key, ['schema', '_bulkseme_schema_jsonld', 'schema_mode', '_bulkseme_schema_mode'], true)
+            && !bulkseme_user_can_seo_group('schema')) {
+            $errors[] = "forbidden_field:$key";
+            continue;
+        }
         if ($key === 'schema' || $key === '_bulkseme_schema_jsonld') {
             $res = bulkseme_store_schema($post_id, $value);
             if ($res !== true) {
@@ -775,16 +1020,28 @@ function bulkseme_apply_update($post_id, $meta) {
             $key = $alias_to_meta[$key];
         }
         $is_allowed = in_array($key, $allowed, true)
-            || ($allowed_dynamic_prefix && strpos($key, $allowed_dynamic_prefix) === 0);
+            || ($allowed_dynamic_prefix && strpos($key, $allowed_dynamic_prefix) === 0
+                && taxonomy_exists(substr($key, strlen($allowed_dynamic_prefix))));
         if (!$is_allowed) {
             $errors[] = "unknown_or_disallowed_key:$key";
             continue;
         }
-        if (in_array($key, ['_yoast_wpseo_canonical', '_yoast_wpseo_opengraph-image', '_yoast_wpseo_twitter-image',
-                             'rank_math_canonical_url', 'rank_math_facebook_image', 'rank_math_twitter_image'], true)) {
-            $value = esc_url_raw($value);
-        } elseif (is_string($value)) {
-            $value = sanitize_text_field($value);
+        // The active SEO plugin's own role rule for this group of settings.
+        if (!bulkseme_user_can_seo_group(bulkseme_field_group($key))) {
+            $errors[] = "forbidden_field:$key";
+            continue;
+        }
+        $is_url = in_array($key, ['_yoast_wpseo_canonical', '_yoast_wpseo_opengraph-image', '_yoast_wpseo_twitter-image',
+                                  'rank_math_canonical_url', 'rank_math_facebook_image', 'rank_math_twitter_image'], true);
+        if (is_array($value) && in_array($key, ['rank_math_robots', 'rank_math_advanced_robots'], true)) {
+            $value = bulkseme_clean_list($value);
+        } else {
+            $value = bulkseme_scalar_text($value);
+            if ($value === null) {
+                $errors[] = "invalid_value_type:$key";
+                continue;
+            }
+            $value = $is_url ? esc_url_raw($value) : sanitize_text_field($value);
         }
         update_post_meta($post_id, $key, $value);
     }
@@ -879,6 +1136,11 @@ function bulkseme_schema_strip_markup($data) {
  * corrupt the stored document.
  */
 function bulkseme_store_schema($post_id, $value) {
+    if (is_array($value)) {
+        // A decoded object or list goes through the same checks as a JSON string.
+        // (It used to be read as "empty", which cleared the stored schema.)
+        $value = $value ? wp_json_encode($value) : '';
+    }
     $raw = is_string($value) ? trim($value) : '';
     if ($raw === '') {
         delete_post_meta($post_id, '_bulkseme_schema_jsonld');
@@ -909,6 +1171,11 @@ function bulkseme_store_schema($post_id, $value) {
  * already checked edit_term for this term.
  */
 function bulkseme_store_term_schema($term_id, $value) {
+    if (is_array($value)) {
+        // A decoded object or list goes through the same checks as a JSON string.
+        // (It used to be read as "empty", which cleared the stored schema.)
+        $value = $value ? wp_json_encode($value) : '';
+    }
     $raw = is_string($value) ? trim($value) : '';
     if ($raw === '') {
         delete_term_meta($term_id, '_bulkseme_schema_jsonld');
@@ -1578,7 +1845,11 @@ add_action('rest_api_init', function () {
             }
             $results = [];
             foreach ($items as $item) {
-                $id   = isset($item['id']) ? (int) $item['id'] : 0;
+                if (!is_array($item)) {
+                    $results[] = ['id' => 0, 'kind' => 'post', 'status' => 'error', 'errors' => ['invalid_item']];
+                    continue;
+                }
+                $id   = isset($item['id']) && is_scalar($item['id']) ? (int) $item['id'] : 0;
                 $meta = isset($item['meta']) && is_array($item['meta']) ? $item['meta'] : [];
                 $kind_raw = isset($item['kind']) ? (string) $item['kind'] : 'post';
                 $known_kinds = array_merge(['term', 'cpt_archive'], array_keys(bulkseme_global_scopes()));
@@ -1667,7 +1938,11 @@ add_action('rest_api_init', function () {
     // post_content via DOM is fragile and risks breaking serialised blocks.
     register_rest_route('seo-meta-bridge/v1', '/bulk-alts', [
         'methods'             => 'POST',
-        'permission_callback' => $perm,
+        // Media only, so the caller must also be allowed to manage media. This keeps
+        // Contributors, who cannot edit any attachment, away from the URL lookups.
+        'permission_callback' => function () {
+            return current_user_can('edit_posts') && current_user_can('upload_files');
+        },
         'callback'            => function (WP_REST_Request $req) {
             $items = $req->get_param('items');
             if (!is_array($items)) {
@@ -1680,8 +1955,12 @@ add_action('rest_api_init', function () {
             $results = [];
             $changed_ids = [];
             foreach ($items as $item) {
-                $url     = isset($item['image_url']) ? trim((string) $item['image_url']) : '';
-                $new_alt = isset($item['new_alt'])   ? (string) $item['new_alt']         : '';
+                if (!is_array($item)) {
+                    $results[] = ['image_url' => '', 'status' => 'error', 'errors' => ['invalid_item']];
+                    continue;
+                }
+                $url     = isset($item['image_url']) && is_scalar($item['image_url']) ? trim((string) $item['image_url']) : '';
+                $new_alt = isset($item['new_alt']) && is_scalar($item['new_alt'])     ? (string) $item['new_alt']         : '';
                 if ($url === '') {
                     $results[] = ['image_url' => '', 'status' => 'error', 'errors' => ['missing_image_url']];
                     continue;
@@ -1895,7 +2174,7 @@ add_action('rest_api_init', function () {
             // Author could read back site settings they can neither see nor edit.
             $archive_active = bulkseme_active_archive_keys();
             $archive_rows = [];
-            if ($include_archives && $archive_active['plugin'] && current_user_can('manage_options')) {
+            if ($include_archives && $archive_active['plugin'] && current_user_can('manage_options') && bulkseme_user_can_seo_group('site')) {
                 foreach (get_post_types(['public' => true, 'has_archive' => true], 'objects') as $pt_obj) {
                     if (empty($pt_obj->has_archive)) continue;
                     $link = get_post_type_archive_link($pt_obj->name);
@@ -2076,7 +2355,13 @@ add_action('rest_api_init', function () {
 
             $results = [];
             foreach ($rows as $row) {
-                $id   = isset($row['id']) ? (int) $row['id'] : 0;
+                if (!is_array($row)) {
+                    $results[] = ['id' => 0, 'kind' => 'post', 'status' => 'error', 'errors' => ['invalid_row']];
+                    continue;
+                }
+                // /export guards formula-like cells with a leading apostrophe; take it off again.
+                $row  = array_map('bulkseme_csv_unguard', $row);
+                $id   = isset($row['id']) && is_scalar($row['id']) ? (int) $row['id'] : 0;
                 $kind_raw = isset($row['kind']) ? (string) $row['kind'] : 'post';
                 $known_kinds = array_merge(['term', 'cpt_archive'], array_keys(bulkseme_global_scopes()));
                 $kind = in_array($kind_raw, $known_kinds, true) ? $kind_raw : 'post';

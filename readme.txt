@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: yoast, rank-math, bulk-edit, meta-description, mcp
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 1.9.0
+Stable tag: 1.9.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -18,7 +18,7 @@ Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases
 
 = What's included =
 
-* **REST endpoints**: read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route or the namespaced helpers
+* **REST endpoints**: read and write SEO meta on any post, page or custom post type via the standard `/wp/v2/posts/{id}` route (reads need `?context=edit`) or the namespaced helpers
 * **Taxonomy term archives**: edit SEO meta on category/tag/custom-taxonomy archive pages too, not just posts (Yoast and Rank Math both supported)
 * **Bulk update**: apply changes to up to 100 posts or terms in a single call
 * **Bulk image alt text**: update `_wp_attachment_image_alt` on up to 200 media-library attachments per call by image URL. Resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment automatically (v1.5.0+)
@@ -165,6 +165,17 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 1.9.1 =
+* Security: SEO fields registered on the core `wp/v2` routes are now returned in the `edit` context only. Before this, a plain `GET /wp/v2/posts/<id>` included them for anyone who could read the post, logged in or not, and that included the focus keyword, which is not printed anywhere on the page. Clients that read `meta` from a core route must add `?context=edit`. The bundled MCP server already does.
+* Security: the active SEO plugin's own role rules now apply to writes through `/bulk`, `/import` and the core routes. Yoast SEO: canonical, robots and breadcrumb title fields, and custom schema, need `wpseo_edit_advanced_metadata` or `wpseo_manage_options` while Yoast's "Security: no advanced or schema settings for authors" setting is on. Rank Math: its `rank_math_onpage_general`, `rank_math_onpage_advanced`, `rank_math_onpage_social` and `rank_math_onpage_snippet` capabilities. A refused field is reported as `forbidden_field:<key>`. Filter: `bulkseme_user_can_edit_field_group`.
+* Security: archive and global scope settings now need the SEO plugin's own settings capability (`wpseo_manage_options` or `rank_math_titles`) as well as `manage_options`. This matters on multisite and on sites that use a role manager.
+* Security: `/bulk-alts` now also requires `upload_files`, so only users who can manage media can call it.
+* Security: `/export` now neutralises spreadsheet formulas. A cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written with a leading apostrophe, so Excel, Google Sheets and LibreOffice show it as text instead of running it. `/import` removes that apostrophe again, so a CSV round trip gives back the stored value unchanged. Use `/bulk` for values that must be taken literally.
+* Security hardening: text fields sent as an array or an object are now refused with `invalid_value_type:<key>` instead of being stored unsanitised. Before this, such a value could also end the request with a PHP error when it reached a URL field. Booleans and numbers are stored as text, and the two Rank Math list fields (`robots`, advanced robots) still accept lists.
+* `schema` sent as a JSON object or array, not only as a JSON string, is now validated and stored. It used to be read as empty, which cleared the stored schema.
+* `rank_math_primary_<taxonomy>` is only accepted for a taxonomy that exists.
+* Items and rows that are not objects are answered with `invalid_item` or `invalid_row`.
+
 = 1.9.0 =
 * New: custom JSON-LD schema on taxonomy terms. `/bulk` items with `kind: "term"` accept the same `schema` and `schema_mode` fields as posts, stored in term meta under the same keys, and `GET /schema?id=<term_id>&kind=term&taxonomy=<slug>` reads them back. The schema renders on the first page of the term archive only. On Rank Math the archive keeps its `CollectionPage` type next to an injected `FAQPage` instead of losing it.
 * New: schema output when no SEO plugin graph is printed. With no Yoast or Rank Math installed, or with their schema output switched off, stored schema is printed as the plugin's own JSON-LD block (encoded with JSON_HEX_TAG and JSON_HEX_AMP, on top of the existing markup checks). When a graph is printed, nothing changes: the nodes still merge into it. Filter `bulkseme_print_standalone_schema` disables the standalone block.
@@ -267,6 +278,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 1.9.1 =
+Security release. SEO fields can no longer be read through the core REST route without edit rights, the SEO plugin's own role rules apply to every write, and CSV exports are safe to open in a spreadsheet. Reading meta from wp/v2 now needs ?context=edit.
 
 = 1.9.0 =
 Adds schema on taxonomy terms, schema output without an SEO plugin graph, post_title via /bulk, POST /sitemap/flush, and removes Product schema nodes that have no offers, review or rating (filter bulkseme_drop_invalid_product_schema to keep them). Now requires WordPress 5.7.
