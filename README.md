@@ -1,5 +1,7 @@
 # Bulk AI CLI Connector: Edit Pages, SEO and Schema with Claude, ChatGPT and MCP Agents
 
+![Bulk AI CLI Connector: edit pages, SEO and schema with Claude, ChatGPT and MCP agents](assets/banner-1544x500.png)
+
 Formerly Bulk SEO Meta Editor for AI Agents. Same plugin, same WordPress.org address.
 
 [![WordPress Plugin Version](https://img.shields.io/wordpress/plugin/v/bulk-seo-meta-editor-for-ai-agents?logo=wordpress&color=9B51E0)](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)
@@ -8,22 +10,30 @@ Formerly Bulk SEO Meta Editor for AI Agents. Same plugin, same WordPress.org add
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-FF7F50)](LICENSE)
 [![npm](https://img.shields.io/npm/v/bulk-seo-meta-editor-mcp?logo=npm&color=FF7F50&label=MCP%20server)](https://www.npmjs.com/package/bulk-seo-meta-editor-mcp)
 
-**Bulk edit Yoast SEO and Rank Math meta over the WordPress REST API.** A free, GPL-2.0 WordPress plugin that
-exposes SEO titles, meta descriptions, canonicals, robots directives, Open Graph and Twitter fields, image alt
-text and custom JSON-LD schema to AI agents (Claude, GPT, Perplexity), automation tools (n8n, Zapier, Make) and
-your own scripts. Auto-detects whichever SEO plugin is active.
+**Connect Claude, ChatGPT and MCP agents to WordPress.** A free, GPL-2.0 WordPress plugin that lets AI agents,
+command-line tools and your own scripts read and rewrite SEO titles, meta descriptions, JSON-LD schema, redirects,
+image alt text and the visible copy of a page, in bulk, over an authenticated REST API. Every page content edit is
+backed up first and can be undone.
+
+There is no AI inside the plugin and it makes no outbound requests. Each call signs in as a WordPress user and can
+only do what that user could do in wp-admin.
 
 Available in the official directory: **[wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)**
 
-Includes:
+What you can do with it:
 
-- REST endpoints for individual and **bulk meta-tag updates** (up to 100 posts/call): titles, descriptions, canonical, robots, Open Graph and Twitter fields
+- **Connect Claude or ChatGPT to WordPress**: Claude Code and other command-line agents call the REST routes directly, Claude Desktop connects through the bundled MCP server, and n8n, Zapier, Make or any script works over plain HTTPS
+- **Bulk edit Yoast SEO and Rank Math meta** (up to 100 posts, pages, products or term archives per call): titles, descriptions, canonical, robots, Open Graph and Twitter fields. Works on the free editions
+- **Edit Elementor and Beaver Builder pages with an AI agent** (2.0.0+): read a page's headings, paragraphs, button labels and list items as a list and change only the ones you name. SiteOrigin Page Builder, Advanced Custom Fields text fields, Gutenberg, the classic editor, Divi and WPBakery pages are covered too
+- **Undo and dry run** (2.0.0+): every page content write stores the previous version first, `dry_run` shows what would change and writes nothing
+- **Custom JSON-LD schema** per post and per taxonomy term (FAQPage, Service, LocalBusiness, HowTo, any type), merged into the active SEO plugin's schema graph, or printed as the plugin's own block when no SEO plugin graph is on the page (1.9.0+)
+- **Redirects, page copies and WooCommerce merchant listing fields** (2.0.0+)
+- **API keys** (2.0.0+) for sites where the host or a security plugin blocks application passwords
 - **Bulk image alt text** updates by image URL (resolves CDN paths and `-WIDTHxHEIGHT` thumbnail suffixes back to the parent attachment)
-- **Custom JSON-LD schema** injection per post and per taxonomy term (FAQPage, Service, LocalBusiness, HowTo, any type), merged into the active SEO plugin's existing schema graph, or printed as the plugin's own block when no SEO plugin graph is on the page (1.9.0+)
 - **Post titles** through `/bulk` (`post_title`, slug untouched), **sitemap cache flush** (`POST /sitemap/flush`) and an **invalid Product schema guard** for quote-only WooCommerce catalogues (1.9.0+)
 - **CSV import/export** for spreadsheet-based editing
 - Taxonomy term archives, CPT archive pages, and global SEO scopes (author/date/search/404/home)
-- A bundled **MCP server** so Claude Code or Claude Desktop can drive it with one-command setup
+- A bundled **MCP server** so Claude Code or Claude Desktop can drive the SEO meta and schema tools with one-command setup
 
 ## What problem does it solve?
 

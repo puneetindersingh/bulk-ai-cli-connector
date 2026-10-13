@@ -1,6 +1,6 @@
 === Bulk AI CLI Connector: Edit Pages, SEO and Schema with Claude, ChatGPT and MCP Agents ===
 Contributors: puneetindersingh
-Tags: yoast, rank-math, bulk-edit, meta-description, mcp
+Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
 Stable tag: 2.0.1
@@ -8,15 +8,39 @@ Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Let AI agents and scripts edit SEO titles, schema, redirects and page copy over the REST API. Elementor, Beaver, Yoast, Rank Math. With undo.
+Connect Claude, ChatGPT and MCP agents to WordPress. Bulk edit SEO meta, schema, redirects and Elementor page copy over the REST API. With undo.
 
 == Description ==
 
+Bulk AI CLI Connector connects AI agents and command-line tools to a WordPress site. Claude, Claude Code, ChatGPT, an MCP client or a plain script can read and rewrite SEO titles, meta descriptions, JSON-LD schema, redirects, image alt text and the visible copy of a page, in bulk, over an authenticated REST API. Every page content edit is backed up first and can be undone.
+
+There is no AI inside the plugin and it sends nothing anywhere: it makes no outbound requests and needs no AI account. It gives the agent you already use a safe way into the site. Each call signs in as a WordPress user and can only do what that user could do in wp-admin.
+
+= What you can do with it =
+
+* **Connect Claude or ChatGPT to WordPress**: Claude Code and other command-line agents call the REST routes directly. Claude Desktop connects through the bundled MCP server. Anything else that can send an authenticated HTTP request works the same way, including n8n, Zapier and Make.
+* **Bulk edit Yoast SEO and Rank Math meta**: SEO titles, meta descriptions, focus keywords, canonical URLs, robots directives, Open Graph and Twitter fields on up to 100 posts, pages, products or term archives in one call. Works on the free editions.
+* **Edit Elementor and Beaver Builder pages with an AI agent**: read the headings, paragraphs, button labels and list items of a page as a list, change only the ones you name, and leave the layout exactly as it was. SiteOrigin Page Builder, Advanced Custom Fields text fields, Gutenberg, the classic editor, Divi and WPBakery pages are covered too.
+* **Add JSON-LD schema**: FAQPage, HowTo, Service or any other type, per post or per category, merged into the Yoast or Rank Math schema graph.
+* **Add redirects**: 301, 302, 307 and 410 rules, saved into Rank Math's Redirections where that is in use.
+* **Bulk update image alt text**: up to 200 media library images per call, matched by image URL.
+* **Work in a spreadsheet**: export every SEO title and description as CSV, edit in Excel or Google Sheets, import it back.
+* **Undo**: every page content write stores the previous version first. Dry runs show what would change and write nothing.
+
+= Works with =
+
+* **SEO plugins**: Yoast SEO and Rank Math, free and paid editions. The active one is detected automatically
+* **Page builders and editors**: Elementor (including Elementor 4 atomic widgets), Beaver Builder, SiteOrigin Page Builder, Advanced Custom Fields, Gutenberg, the classic editor, Divi, WPBakery
+* **WooCommerce**: products, product categories and product tags, plus return policy and shipping details on Product schema
+* **Agents and tools**: Claude Code, Claude Desktop, ChatGPT, MCP clients, n8n, Zapier, Make, cURL, Python and Node scripts, headless front ends
+
+= Why it exists =
+
+WordPress does not expose Yoast SEO or Rank Math fields over the REST API, and page builders keep a page in post meta where the core REST API cannot reach it. Editing a meta title or an Elementor heading programmatically normally means WP-CLI with server access, a custom plugin, or a premium tier. This plugin adds a clean, authenticated REST surface instead.
+
+It auto-detects which SEO plugin is active and exposes plugin-neutral field aliases (`title`, `description`, `focus_kw`, ...) so you don't need to memorise Yoast vs Rank Math meta keys.
+
 This plugin was called Bulk SEO Meta Editor for AI Agents up to version 1.9.1. Same plugin, same address, same REST routes, new name: it now edits page content as well as SEO fields.
-
-Bulk edit Yoast SEO or Rank Math meta from outside wp-admin. WordPress does not expose those fields over the REST API, so editing a meta title programmatically normally means WP-CLI, a custom plugin, or a premium SEO tier. This plugin adds a clean, authenticated REST surface instead, so AI agents (Claude, ChatGPT, Perplexity), automation tools (n8n, Zapier, Make) and headless workflows can read and rewrite SEO titles, meta descriptions, canonical URLs, robots directives, Open Graph and Twitter fields on up to 100 posts in a single HTTP call.
-
-Auto-detects which SEO plugin is active and exposes plugin-neutral field aliases (`title`, `description`, `focus_kw`, ...) so you don't need to memorise Yoast vs Rank Math meta keys.
 
 = New in 2.0: page copy, redirects and API keys =
 
@@ -87,9 +111,11 @@ The standard WordPress REST route also works: `POST /wp/v2/posts/{id}` with a `m
 
 Plus robots, OG/Twitter description fields, and Rank Math primary-taxonomy keys.
 
-= MCP server (Claude / Claude Code) =
+= MCP server for Claude Desktop and Claude Code =
 
 A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/tree/main/mcp-server and published to npm as `bulk-seo-meta-editor-mcp`. Add to Claude Desktop / Claude Code with one command and Claude can read, edit, bulk-update, and CSV-roundtrip SEO meta on any of your sites.
+
+The MCP server has ten tools, for SEO meta and schema. Page content, redirects and the other routes added in 2.0 are REST routes: an agent that can send HTTP requests, Claude Code for example, calls them directly.
 
 = Security =
 
@@ -115,6 +141,22 @@ Yoast SEO is a trademark of Yoast BV. Rank Math is a trademark of RankMath. Clau
 For the optional MCP server, install via npm: `npm install -g bulk-seo-meta-editor-mcp` and configure Claude Desktop / Claude Code with `WP_BASE_URL`, `WP_USER`, and `WP_APP_PASS` environment variables.
 
 == Frequently Asked Questions ==
+
+= How do I connect Claude or ChatGPT to WordPress? =
+
+Install and activate the plugin, then create an Application Password under **Users → Your Profile**, or an API key under **Tools → Agent API Keys** if your host blocks application passwords. Give the site address and that credential to your agent. Claude Code and other command-line agents call the REST routes under `/wp-json/seo-meta-bridge/v1/` directly. Claude Desktop uses the bundled MCP server. ChatGPT and other tools work wherever they can send an authenticated HTTPS request. Start with `GET /status`, which reports the active SEO plugin and the fields available.
+
+= Is this an MCP server for WordPress? =
+
+It is a REST API plugin with an MCP server bundled alongside it. The MCP server (`bulk-seo-meta-editor-mcp` on npm) runs on your own computer and gives Claude Desktop and Claude Code ten tools for SEO meta and schema. Page content, redirects, page copies and API keys are REST routes, which an agent calls over HTTPS without MCP.
+
+= Do I need WP-CLI, SSH or server access? =
+
+No. "CLI" in the name refers to the command-line agents and scripts on your own computer. Everything goes over HTTPS to the WordPress REST API, so it works on shared hosting and managed hosts where you have no shell.
+
+= Does the plugin send my content to an AI service? =
+
+No. The plugin contains no AI and makes no outbound requests. It only answers REST calls from a signed-in WordPress user. What your agent does with the text it reads is between you and that agent.
 
 = How do I bulk edit meta descriptions in WordPress? =
 
@@ -172,7 +214,7 @@ You shouldn't. They conflict with each other in the front-end (duplicate meta ta
 
 Yes. The plugin does nothing until something calls the REST endpoints, and every call needs a signed-in user who could make the same change in wp-admin. SEO fields, schema, alt text and titles are checked per post. Since 2.0.0 page copy can be edited too: each write is cleaned with the post content allowlist, stores a backup first, and can be reverted. The plugin cannot create users, change settings outside its own, install anything, or run code that was sent to it.
 
-= Can an AI agent edit an Elementor or Beaver Builder page? =
+= Can Claude or ChatGPT edit an Elementor or Beaver Builder page? =
 
 Yes, since 2.0.0. `GET /content?id=<page id>` returns the page's headings, paragraphs, button labels and list items as nodes, each with the element id and setting name it lives in. Send the ones you want changed to `POST /content` as `updates: [{"el": "...", "setting": "...", "value": "..."}]`. Only those values change. Add `"dry_run": true` to see the result without writing.
 
