@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: yoast, rank-math, bulk-edit, meta-description, mcp
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.0.0
+Stable tag: 2.0.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -224,6 +224,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.0.1 =
+* Security hardening: `/clone` now checks a stored meta value in exactly the form WordPress reads it back. A value planted straight into the database with a NUL byte in front of a serialised object could get past the check that keeps `/clone` from recreating objects of other classes. Using it needed a row written outside WordPress and a caller with the `unfiltered_html` capability. Found in an independent review; not known to have been used.
+
 = 2.0.0 =
 * Renamed from "Bulk SEO Meta Editor for AI Agents" to "Bulk AI CLI Connector". The plugin address, folder, REST routes and stored data are unchanged.
 * New: page content. `GET /content` and `POST /content` read and edit the visible text of a page for Elementor (classic and Elementor 4 atomic widgets, heading level, link URLs and per-element custom CSS), Beaver Builder, SiteOrigin Page Builder (core text widgets and the SiteOrigin Widgets Bundle: editor, headline, button, call to action, accordion, tabs, hero, features, testimonials and image), the Accordions plugin and Advanced Custom Fields text fields, and the post content of Gutenberg, classic, Divi and WPBakery pages. `POST /content/replace` runs a literal find and replace. Add `kind=term&taxonomy=<slug>` for a term description, which keeps headings, lists and tables.
@@ -358,6 +361,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.0.1 =
+Security hardening for /clone. Recommended for every site on 2.0.0.
 
 = 2.0.0 =
 Adds page content editing (Elementor, Beaver Builder, SiteOrigin, ACF, block and classic pages) with undo, redirects, page copies and API keys. Security: records without an edit screen, such as privacy requests, can no longer be renamed through /bulk.

@@ -56,15 +56,22 @@ function bulkseme_clone_meta_value($raw, &$ok) {
     if (!is_string($raw) || !is_serialized($raw)) {
         return $raw;
     }
-    if (preg_match_all('/(?:^|[;{}])\s*([OCE]):\+?\d+:"([^"]*)"/i', $raw, $found, PREG_SET_ORDER)) {
-        foreach ($found as $hit) {
-            if (strtoupper($hit[1]) !== 'O' || strtolower($hit[2]) !== 'stdclass') {
-                $ok = false;
-                return null;
-            }
+    // Core trims the value before it unserialises it, and trim() also removes NUL
+    // bytes, which \s does not match. The check below must read the same text.
+    $text  = trim($raw);
+    $found = [];
+    $hits  = preg_match_all('/(?:^|[;{}])\s*([OCE]):\+?\d+:"([^"]*)"/i', $text, $found, PREG_SET_ORDER);
+    if ($hits === false) {
+        $ok = false; // the pattern could not run: refuse rather than guess
+        return null;
+    }
+    foreach ($found as $hit) {
+        if (strtoupper($hit[1]) !== 'O' || strtolower($hit[2]) !== 'stdclass') {
+            $ok = false;
+            return null;
         }
     }
-    $value = maybe_unserialize($raw);
+    $value = maybe_unserialize($text);
     if (bulkseme_clone_holds_foreign_object($value)) {
         $ok = false;
         return null;
