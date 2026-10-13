@@ -247,6 +247,7 @@ function bulkseme_bb_module_fields($settings, $slug) {
         return $out;
     }
     // Unknown module: copy-looking string keys, plus one level into repeater rows.
+    // Markup in a module with no map gets the guarded kind (bulkseme_content_guard_quotes()).
     $keys = bulkseme_bb_generic_keys();
     foreach ((array) $settings as $k => $v) {
         if (!is_string($k) || $k === 'type' || !preg_match('/^[A-Za-z0-9_-]+$/', $k)) {
@@ -254,7 +255,7 @@ function bulkseme_bb_module_fields($settings, $slug) {
         }
         if (is_string($v)) {
             if ($v !== '' && in_array($k, $keys, true)) {
-                $out[$k] = (strpos($v, '<') !== false) ? 'html' : 'text';
+                $out[$k] = (strpos($v, '<') !== false) ? 'html_guarded' : 'text';
             }
             continue;
         }
@@ -270,7 +271,7 @@ function bulkseme_bb_module_fields($settings, $slug) {
             }
             foreach ((array) $row as $k2 => $v2) {
                 if (is_string($k2) && preg_match('/^[A-Za-z0-9_-]+$/', $k2) && is_string($v2) && $v2 !== '' && in_array($k2, $keys, true)) {
-                    $out[$k . '[' . $i . '].' . $k2] = (strpos($v2, '<') !== false) ? 'html' : 'text';
+                    $out[$k . '[' . $i . '].' . $k2] = (strpos($v2, '<') !== false) ? 'html_guarded' : 'text';
                 }
             }
         }
@@ -338,7 +339,9 @@ function bulkseme_bb_flatten(array $data) {
                     if (!is_string($val)) {
                         continue;
                     }
-                    $node = [
+                    // "html_guarded" is how a value is cleaned on the way in; a reader sees plain "html".
+                    $ftype = $ftype === 'html_guarded' ? 'html' : $ftype;
+                    $node  = [
                         'el' => (string) $id, 'module' => $slug, 'setting' => $setting, 'type' => $ftype,
                         'text' => $val, 'html' => ($ftype === 'html'), 'editable' => !$tpl, 'path' => $p,
                     ];

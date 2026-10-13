@@ -156,18 +156,20 @@ function bulkseme_so_widget_fields(array $w, $class) {
         }
         return $out;
     }
-    // Unknown class: copy-looking string keys, two levels deep.
+    // Unknown class: copy-looking string keys, two levels deep. A value that holds
+    // markup is HTML, but where this widget prints it is not known, so it gets the
+    // guarded kind: see bulkseme_content_guard_quotes().
     $keys = bulkseme_so_generic_keys();
     foreach ($w as $k => $v) {
         if ($k === 'panels_info' || $k === 'info' || !is_string($k) || !preg_match('/^[A-Za-z0-9_-]+$/', $k)) {
             continue;
         }
         if (is_string($v) && in_array($k, $keys, true)) {
-            $out[$k] = (strpos($v, '<') !== false) ? 'html' : 'text';
+            $out[$k] = (strpos($v, '<') !== false) ? 'html_guarded' : 'text';
         } elseif (is_array($v)) {
             foreach ($v as $k2 => $v2) {
                 if (is_string($k2) && preg_match('/^[A-Za-z0-9_-]+$/', $k2) && is_string($v2) && in_array($k2, $keys, true)) {
-                    $out[$k . '.' . $k2] = (strpos($v2, '<') !== false) ? 'html' : 'text';
+                    $out[$k . '.' . $k2] = (strpos($v2, '<') !== false) ? 'html_guarded' : 'text';
                 }
             }
         }
@@ -208,6 +210,8 @@ function bulkseme_so_flatten(array $panels_data, $prefix = '', $depth = 0) {
             if (!is_string($val)) {
                 continue;
             }
+            // "html_guarded" is how a value is cleaned on the way in; a reader sees plain "html".
+            $type    = $type === 'html_guarded' ? 'html' : $type;
             $nodes[] = [
                 'el' => $el, 'widget' => $class, 'setting' => $setting, 'type' => $type,
                 'text' => $val, 'html' => ($type === 'html'), 'editable' => true, 'path' => $path,
@@ -263,9 +267,13 @@ function &bulkseme_so_locate(array &$panels_data, $el) {
 }
 
 function bulkseme_so_clean($value, $type, $unsafe_html) {
-    if ($type === 'html') {
+    if ($type === 'html' || $type === 'html_guarded') {
         $value = bulkseme_content_utf8($value);
-        return bulkseme_content_raw_html_allowed($unsafe_html) ? $value : wp_kses_post($value);
+        if (bulkseme_content_raw_html_allowed($unsafe_html)) {
+            return $value;
+        }
+        $value = wp_kses_post($value);
+        return $type === 'html_guarded' ? bulkseme_content_guard_quotes($value) : $value;
     }
     return bulkseme_content_sanitize($value, 'text');
 }

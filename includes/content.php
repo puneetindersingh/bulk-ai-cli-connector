@@ -187,6 +187,24 @@ function bulkseme_content_sanitize($value, $ctl_type) {
 }
 
 /**
+ * HTML for a field of a widget or module this plugin has no map for.
+ *
+ * Where such a widget prints the value is not known. Quotes in the text between
+ * tags are therefore stored as entities: in the page body they read exactly the
+ * same, and inside an HTML attribute they cannot end it. Tags and their own
+ * attributes stay as the content filter left them.
+ */
+function bulkseme_content_guard_quotes($html) {
+    $parts = wp_html_split((string) $html);
+    foreach ($parts as $i => $part) {
+        if ($part !== '' && $part[0] !== '<') {
+            $parts[$i] = str_replace(['"', "'"], ['&quot;', '&#039;'], $part);
+        }
+    }
+    return implode('', $parts);
+}
+
+/**
  * A value as valid UTF-8 text. Bytes that are not valid UTF-8 are dropped here,
  * once, so that nothing further down (a pattern match, JSON encoding, the
  * database) fails on them and empties the field.
@@ -234,7 +252,7 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
     if ($req->get_param('kind') === 'term') {
         return bulkseme_rest_term_content_get($req);
     }
-    $post = bulkseme_content_load_post(absint($req->get_param('id')), $det);
+    $post = bulkseme_content_load_post(bulkseme_param_id($req->get_param('id')), $det);
     if (is_wp_error($post)) {
         return $post;
     }
@@ -424,7 +442,7 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
     if ($req->get_param('kind') === 'term') {
         return bulkseme_rest_term_content_post($req);
     }
-    $post = bulkseme_content_load_post(absint($req->get_param('id')), $det);
+    $post = bulkseme_content_load_post(bulkseme_param_id($req->get_param('id')), $det);
     if (is_wp_error($post)) {
         return $post;
     }
@@ -497,7 +515,7 @@ function bulkseme_rest_content_replace(WP_REST_Request $req) {
     if ($req->get_param('kind') === 'term') {
         return new WP_Error('unsupported_for_terms', 'find/replace is not available for term descriptions; GET the description, edit it and POST it back with kind=term', ['status' => 501]);
     }
-    $post = bulkseme_content_load_post(absint($req->get_param('id')), $det);
+    $post = bulkseme_content_load_post(bulkseme_param_id($req->get_param('id')), $det);
     if (is_wp_error($post)) {
         return $post;
     }
@@ -606,7 +624,7 @@ function bulkseme_rest_content_backups(WP_REST_Request $req) {
     if ($req->get_param('kind') === 'term') {
         return bulkseme_rest_term_content_backups($req);
     }
-    $post = bulkseme_content_load_post(absint($req->get_param('id')));
+    $post = bulkseme_content_load_post(bulkseme_param_id($req->get_param('id')));
     if (is_wp_error($post)) {
         return $post;
     }
@@ -632,12 +650,12 @@ function bulkseme_rest_content_revert(WP_REST_Request $req) {
     if ($req->get_param('kind') === 'term') {
         return bulkseme_rest_term_content_revert($req);
     }
-    $post = bulkseme_content_load_post(absint($req->get_param('id')));
+    $post = bulkseme_content_load_post(bulkseme_param_id($req->get_param('id')));
     if (is_wp_error($post)) {
         return $post;
     }
     $id = $post->ID;
-    $ts = absint($req->get_param('ts'));
+    $ts = bulkseme_param_id($req->get_param('ts'));
     $env = $ts ? bulkseme_content_read_backup($id, $ts) : null;
     if (!$env) {
         return new WP_Error('backup_not_found', 'no backup with that ts for this post', ['status' => 404]);
@@ -960,14 +978,27 @@ function bulkseme_rest_content_revert_meta_builder($post, array $env, $ts) {
  * editor rebuilds _wpb_shortcodes_custom_css from every `.vc_custom_<n>{...}`
  * design option on save; a REST write skips that step, so design options added
  * or changed over the API would render without their styles. Only rules of
- * that exact shape are copied, and none that carries a quote, an angle bracket
- * or a backslash, so nothing but plain declarations can reach the style block
- * WPBakery prints. Returns bytes.
+ * that exact shape are copied, none that carries a quote, an angle bracket or a
+ * backslash, and each rule's declarations go through the filter WordPress
+ * itself uses for an inline style attribute (safecss_filter_attr). So the style
+ * block WPBakery prints can hold nothing that the same user could not already
+ * write as style="..." in the post. Returns bytes.
  */
 function bulkseme_wpb_rebuild_custom_css($post_id) {
     $content = (string) get_post_field('post_content', $post_id, 'raw');
-    preg_match_all('/\.vc_custom_\d+\{[^{}"\'<>\\\\]*\}/', $content, $m);
-    $css = implode('', array_values(array_unique($m[0])));
+    preg_match_all('/(\.vc_custom_\d+)\{([^{}"\'<>\\\\]*)\}/', $content, $m, PREG_SET_ORDER);
+    $rules = [];
+    foreach ($m as $rule) {
+        // What is left of a declaration the filter cut in two (a data: URL holds
+        // a semicolon) has no property name any more; such pieces are dropped.
+        $declarations = implode(';', array_filter(array_map('trim', explode(';', safecss_filter_attr($rule[2]))), function ($d) {
+            return (bool) preg_match('/^[a-z-]+\s*:/i', $d);
+        }));
+        if ($declarations !== '') {
+            $rules[$rule[1] . '{' . $declarations . '}'] = true;
+        }
+    }
+    $css = implode('', array_keys($rules));
     if ($css === '') {
         delete_post_meta($post_id, '_wpb_shortcodes_custom_css');
     } else {
@@ -992,7 +1023,7 @@ add_action('rest_api_init', function () {
             'methods'             => 'GET',
             'permission_callback' => $perm,
             'args'                => [
-                'id'       => ['required' => true, 'sanitize_callback' => 'absint'],
+                'id'       => ['required' => true, 'sanitize_callback' => 'bulkseme_param_id'],
                 'kind'     => ['type' => 'string', 'enum' => ['post', 'term'], 'required' => false],
                 'taxonomy' => ['type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_key'],
             ],
@@ -1019,7 +1050,7 @@ add_action('rest_api_init', function () {
         'methods'             => 'GET',
         'permission_callback' => $perm,
         'args'                => [
-                'id'       => ['required' => true, 'sanitize_callback' => 'absint'],
+                'id'       => ['required' => true, 'sanitize_callback' => 'bulkseme_param_id'],
                 'kind'     => ['type' => 'string', 'enum' => ['post', 'term'], 'required' => false],
                 'taxonomy' => ['type' => 'string', 'required' => false, 'sanitize_callback' => 'sanitize_key'],
             ],

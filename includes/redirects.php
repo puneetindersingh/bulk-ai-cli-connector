@@ -383,7 +383,7 @@ function bulkseme_rest_redirect_list(WP_REST_Request $req) {
     if (!bulkseme_redirect_user_can('rankmath')) {
         return bulkseme_redirect_forbidden();
     }
-    $limit = $req->get_param('limit') !== null ? absint($req->get_param('limit')) : 100;
+    $limit = $req->get_param('limit') !== null ? bulkseme_param_id($req->get_param('limit')) : 100;
     $rules = bulkseme_redirect_rankmath_list($limit);
     return ['engine' => $engine, 'count' => count($rules), 'rules' => $rules, 'builtin_rules' => count($own)];
 }
@@ -486,7 +486,7 @@ function bulkseme_rest_redirect_save(WP_REST_Request $req) {
 
 function bulkseme_rest_redirect_delete(WP_REST_Request $req) {
     $engine = bulkseme_redirect_engine();
-    $id     = absint($req->get_param('id'));
+    $id     = bulkseme_param_id($req->get_param('id'));
     $from   = $req->get_param('from') !== null ? bulkseme_redirect_normalise_from($req->get_param('from')) : null;
     if (is_wp_error($from)) {
         return $from;

@@ -151,8 +151,29 @@ function bulkseme_key_user(array $rec) {
 }
 
 /**
+ * The routes this plugin registers under seo-meta-bridge/v1, as paths below the
+ * namespace ('' is the namespace index). A key with the default scope signs in
+ * on these and on nothing else.
+ *
+ * The list is spelled out, not taken from the namespace: another plugin can
+ * register routes of its own in the same namespace, and a key that was made for
+ * this plugin's routes must not sign anyone in on those.
+ *
+ * /update is left out on purpose. Installing a new version of the plugin is
+ * site administration, so it takes a key with the wider scope, an application
+ * password or a browser session.
+ */
+function bulkseme_own_routes() {
+    return [
+        '', '/status', '/schema', '/sitemap/flush', '/bulk', '/bulk-alts', '/export', '/import',
+        '/content', '/content/replace', '/content/backups', '/content/revert', '/clone',
+        '/redirect', '/merchant-policy', '/register-key',
+    ];
+}
+
+/**
  * Does the key's scope cover the route being requested? A key with the default
- * scope signs in on this plugin's routes and nowhere else.
+ * scope signs in on this plugin's own routes and nowhere else.
  */
 function bulkseme_key_scope_allows(array $rec) {
     if (isset($rec['scope']) && $rec['scope'] === 'all') {
@@ -161,9 +182,14 @@ function bulkseme_key_scope_allows(array $rec) {
     global $wp;
     // The route WordPress itself parsed for this request, the same value it hands to the REST server.
     $route = (is_object($wp) && isset($wp->query_vars['rest_route']) && is_string($wp->query_vars['rest_route']))
-        ? '/' . ltrim($wp->query_vars['rest_route'], '/')
+        ? '/' . trim($wp->query_vars['rest_route'], '/')
         : '';
-    return strcasecmp($route, '/seo-meta-bridge/v1') === 0 || stripos($route, '/seo-meta-bridge/v1/') === 0;
+    $base = '/seo-meta-bridge/v1';
+    if (strncasecmp($route, $base, strlen($base)) !== 0) {
+        return false;
+    }
+    // WordPress matches routes without regard to case, so the comparison does the same.
+    return in_array(strtolower((string) substr($route, strlen($base))), bulkseme_own_routes(), true);
 }
 
 /**
@@ -283,14 +309,37 @@ function bulkseme_generate_api_key($label, $user_id, $scope = 'plugin') {
     return 'bsme_' . $id . '_' . $secret;
 }
 
+/**
+ * A revoked key is revoked everywhere.
+ *
+ * A companion build can hand its keys over to this plugin and keeps a copy of
+ * them in an option of its own. That copy signs requests in whenever the
+ * companion runs without this plugin. So a key that is revoked here is taken
+ * out of the companion's copy as well, in the same step and whether or not the
+ * companion is active at that moment. Only the same key is touched: same id and
+ * same hash. The copy is never read to sign anyone in.
+ */
+function bulkseme_drop_companion_key($id, $hash) {
+    $copy = get_option('seocli_api_keys', null);
+    if (!is_array($copy) || !is_string($id) || !isset($copy[$id]) || !is_array($copy[$id])) {
+        return;
+    }
+    if (isset($copy[$id]['hash']) && is_string($copy[$id]['hash']) && is_string($hash) && hash_equals($copy[$id]['hash'], $hash)) {
+        unset($copy[$id]);
+        update_option('seocli_api_keys', $copy, false);
+    }
+}
+
 /** Remove one key. Returns true when it existed. */
 function bulkseme_revoke_api_key($id) {
     $keys = bulkseme_keys();
     if (!is_string($id) || !isset($keys[$id])) {
         return false;
     }
+    $hash = is_array($keys[$id]) && isset($keys[$id]['hash']) ? $keys[$id]['hash'] : '';
     unset($keys[$id]);
     update_option('bulkseme_api_keys', $keys, false);
+    bulkseme_drop_companion_key($id, $hash);
     return true;
 }
 
@@ -298,13 +347,19 @@ function bulkseme_revoke_api_key($id) {
 add_action('deleted_user', function ($user_id) {
     $keys = bulkseme_keys();
     $kept = [];
+    $gone = [];
     foreach ($keys as $id => $rec) {
         if (!is_array($rec) || !isset($rec['user_id']) || (int) $rec['user_id'] !== (int) $user_id) {
             $kept[$id] = $rec;
+        } else {
+            $gone[$id] = isset($rec['hash']) ? $rec['hash'] : '';
         }
     }
-    if (count($kept) !== count($keys)) {
+    if ($gone) {
         update_option('bulkseme_api_keys', $kept, false);
+        foreach ($gone as $id => $hash) {
+            bulkseme_drop_companion_key((string) $id, $hash);
+        }
     }
 });
 

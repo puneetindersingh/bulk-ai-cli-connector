@@ -123,7 +123,7 @@ function bulkseme_clone_slash($value) {
 }
 
 function bulkseme_rest_clone(WP_REST_Request $req) {
-    $source = get_post(absint($req->get_param('source_id')));
+    $source = get_post(bulkseme_param_id($req->get_param('source_id')));
     $pto    = $source ? get_post_type_object($source->post_type) : null;
     if (!$source || $source->post_status === 'trash' || !bulkseme_post_type_reachable($source->post_type) || in_array($source->post_type, ['attachment', 'nav_menu_item'], true)) {
         return new WP_Error('not_found', 'source post not found', ['status' => 404]);

@@ -280,6 +280,13 @@ function bulkseme_current_schema() {
     if (!$post_id) {
         return ['mode' => 'add', 'nodes' => []];
     }
+    // A password-protected post shows only its password form until the visitor
+    // has entered the password. Its stored schema describes the hidden content
+    // (an FAQ answer, a price), so it waits as well. Yoast SEO and Rank Math
+    // hold their own schema back on such a page in the same way.
+    if (post_password_required($post_id)) {
+        return ['mode' => 'add', 'nodes' => []];
+    }
     return [
         'mode'  => bulkseme_schema_mode_for_post($post_id),
         'nodes' => bulkseme_schema_nodes_for_post($post_id),

@@ -15,11 +15,11 @@ if (!defined('ABSPATH')) exit;
 
 /** Shared entry guards for kind=term. Returns WP_Term or WP_Error. */
 function bulkseme_content_load_term(WP_REST_Request $req) {
-    $taxonomy = sanitize_key((string) $req->get_param('taxonomy'));
+    $taxonomy = sanitize_key(bulkseme_param_text($req->get_param('taxonomy')));
     if ($taxonomy === '' || !taxonomy_exists($taxonomy)) {
         return new WP_Error('unknown_taxonomy', 'kind=term needs an existing taxonomy', ['status' => 400]);
     }
-    $id   = absint($req->get_param('id'));
+    $id   = bulkseme_param_id($req->get_param('id'));
     $term = $id ? get_term($id, $taxonomy) : null;
     if (!$term || is_wp_error($term)) {
         return new WP_Error('term_not_found', 'term not found in that taxonomy', ['status' => 404]);
@@ -163,7 +163,7 @@ function bulkseme_rest_term_content_revert(WP_REST_Request $req) {
     if (is_wp_error($term)) {
         return $term;
     }
-    $ts  = absint($req->get_param('ts'));
+    $ts  = bulkseme_param_id($req->get_param('ts'));
     $env = $ts ? bulkseme_term_content_read_backup($term->term_id, $ts) : null;
     if (!$env) {
         return new WP_Error('backup_not_found', 'no backup with that ts for this term', ['status' => 404]);

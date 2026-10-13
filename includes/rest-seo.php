@@ -192,6 +192,7 @@ add_action('rest_api_init', function () {
                 'supports_beaver'   => true,
                 'supports_acf'      => bulkseme_acf_active(),
                 'supports_redirects' => true,
+                'supports_update'   => true,
                 'drops_invalid_product_schema' => (bool) apply_filters('bulkseme_drop_invalid_product_schema', true),
                 'builders'          => bulkseme_builders_status(current_user_can('activate_plugins')),
                 'content_editable_builders' => ['elementor', 'gutenberg', 'classic', 'divi', 'wpbakery', 'siteorigin', 'accordions', 'beaver', 'acf'],
@@ -228,7 +229,7 @@ add_action('rest_api_init', function () {
         'args'                => [
             'id' => [
                 'required'          => true,
-                'sanitize_callback' => 'absint',
+                'sanitize_callback' => 'bulkseme_param_id',
             ],
             'kind' => [
                 'required'          => false,
@@ -240,9 +241,9 @@ add_action('rest_api_init', function () {
             ],
         ],
         'callback'            => function (WP_REST_Request $req) {
-            $id = (int) $req->get_param('id');
-            if ((string) $req->get_param('kind') === 'term') {
-                $taxonomy = (string) $req->get_param('taxonomy');
+            $id = bulkseme_param_id($req->get_param('id'));
+            if (bulkseme_param_text($req->get_param('kind')) === 'term') {
+                $taxonomy = bulkseme_param_text($req->get_param('taxonomy'));
                 if ($taxonomy === '' || !taxonomy_exists($taxonomy)) {
                     return new WP_Error('unknown_taxonomy', 'a valid taxonomy is required for kind=term', ['status' => 400]);
                 }
@@ -337,7 +338,7 @@ add_action('rest_api_init', function () {
                 }
                 $id   = isset($item['id']) && is_scalar($item['id']) ? (int) $item['id'] : 0;
                 $meta = isset($item['meta']) && is_array($item['meta']) ? $item['meta'] : [];
-                $kind_raw = isset($item['kind']) ? (string) $item['kind'] : 'post';
+                $kind_raw = isset($item['kind']) && is_scalar($item['kind']) ? (string) $item['kind'] : 'post';
                 $known_kinds = array_merge(['term', 'cpt_archive'], array_keys(bulkseme_global_scopes()));
                 $kind = in_array($kind_raw, $known_kinds, true) ? $kind_raw : 'post';
 
@@ -555,27 +556,28 @@ add_action('rest_api_init', function () {
                 return new WP_Error('no_seo_plugin', 'No SEO plugin active', ['status' => 400]);
             }
 
-            $post_types_param = $req->get_param('post_type') ?: 'post,page';
+            // Every parameter is read through a helper that takes a comma-separated
+            // string or a list and nothing else: ?post_type[]=x used to end the
+            // request with a TypeError.
+            $post_types_param = bulkseme_param_list($req->get_param('post_type')) ?: ['post', 'page'];
             // 'any' is a magic WP_Query value meaning all public types except
             // attachment/revision. Pass it as a string, not an array.
-            if (trim($post_types_param) === 'any') {
+            if ($post_types_param === ['any']) {
                 $post_types = 'any';
             } else {
                 // Only types that have an edit screen or a REST route of their own.
-                $post_types = array_values(array_filter(array_map('trim', explode(',', $post_types_param)), 'bulkseme_post_type_reachable'));
+                $post_types = array_values(array_filter($post_types_param, 'bulkseme_post_type_reachable'));
                 if (!$post_types) {
                     $post_types = ['post', 'page'];
                 }
             }
-            $status           = $req->get_param('status') ?: 'publish,draft';
-            $limit            = min(2000, max(1, (int) ($req->get_param('limit') ?: 500)));
-            $offset           = max(0, (int) ($req->get_param('offset') ?: 0));
-            $include_terms    = (string) $req->get_param('include_terms') === '1';
-            $include_archives = (string) $req->get_param('include_archives') === '1';
-            $taxonomies_param = $req->get_param('taxonomy');
-            $taxonomies = $taxonomies_param
-                ? array_map('trim', explode(',', $taxonomies_param))
-                : array_values(get_taxonomies(['public' => true], 'names'));
+            $statuses         = bulkseme_param_list($req->get_param('status')) ?: ['publish', 'draft'];
+            $limit            = min(2000, max(1, (int) (bulkseme_param_text($req->get_param('limit')) ?: 500)));
+            $offset           = max(0, (int) (bulkseme_param_text($req->get_param('offset')) ?: 0));
+            $include_terms    = bulkseme_param_text($req->get_param('include_terms')) === '1';
+            $include_archives = bulkseme_param_text($req->get_param('include_archives')) === '1';
+            $taxonomies       = bulkseme_param_list($req->get_param('taxonomy'))
+                ?: array_values(get_taxonomies(['public' => true], 'names'));
 
             // Author scoping for /export. When the caller lacks edit_others_posts
             // (i.e. Author / Contributor roles), restrict the query to posts they
@@ -585,7 +587,7 @@ add_action('rest_api_init', function () {
             // the per-post edit_post check applied to every emitted row below.
             $query_args = [
                 'post_type'      => $post_types,
-                'post_status'    => array_map('trim', explode(',', $status)),
+                'post_status'    => $statuses,
                 'posts_per_page' => $limit,
                 'offset'         => $offset,
                 'orderby'        => 'ID',
@@ -788,7 +790,8 @@ add_action('rest_api_init', function () {
         'methods'             => 'POST',
         'permission_callback' => $perm,
         'callback'            => function (WP_REST_Request $req) {
-            $rows = [];
+            $rows         = [];
+            $skipped_rows = 0;
 
             // Multipart CSV upload?
             $files = $req->get_file_params();
@@ -802,23 +805,33 @@ add_action('rest_api_init', function () {
                 global $wp_filesystem;
                 $csv_text = $wp_filesystem->get_contents($files['csv']['tmp_name']);
                 if ($csv_text !== false) {
+                    if (strlen($csv_text) > 10 * MB_IN_BYTES) {
+                        return new WP_Error('file_too_large', 'the CSV file is larger than 10 MB', ['status' => 413]);
+                    }
                     // Strip leading UTF-8 BOM so the first header cell isn't "\xEF\xBB\xBFid"
                     // (which would silently drop every row's id on round-trip imports).
                     if (substr($csv_text, 0, 3) === "\xEF\xBB\xBF") {
                         $csv_text = substr($csv_text, 3);
                     }
-                    $lines = preg_split('/\r\n|\r|\n/', $csv_text);
+                    // The whole text is read as CSV, so a quoted cell that holds line
+                    // breaks stays one cell. It is never cut into lines first.
+                    // 2,000 data rows and a header is the most one import takes; the reader stops just past it.
+                    list($parsed, $well_formed) = bulkseme_csv_parse($csv_text, 2002);
+                    if (!$well_formed) {
+                        return new WP_Error('malformed_csv', 'the CSV file ends inside a quoted cell; nothing was imported', ['status' => 400]);
+                    }
                     $hdr = null;
-                    foreach ($lines as $line) {
-                        if ($line === '' || $line === null) continue;
-                        $cells = str_getcsv($line);
+                    foreach ($parsed as $cells) {
                         if ($hdr === null) {
                             $hdr = $cells;
-                        } else {
-                            // array_combine errors if counts differ - skip the bad row.
-                            if (count($cells) === count($hdr)) {
-                                $rows[] = array_combine($hdr, $cells);
+                            if (count(array_unique($hdr)) !== count($hdr)) {
+                                return new WP_Error('malformed_csv', 'the CSV header names a column twice; nothing was imported', ['status' => 400]);
                             }
+                        } elseif (count($cells) === count($hdr)) {
+                            // A row with more or fewer cells than the header is left out.
+                            $rows[] = array_combine($hdr, $cells);
+                        } else {
+                            $skipped_rows++;
                         }
                     }
                 }
@@ -852,7 +865,7 @@ add_action('rest_api_init', function () {
                 // /export guards formula-like cells with a leading apostrophe; take it off again.
                 $row  = array_map('bulkseme_csv_unguard', $row);
                 $id   = isset($row['id']) && is_scalar($row['id']) ? (int) $row['id'] : 0;
-                $kind_raw = isset($row['kind']) ? (string) $row['kind'] : 'post';
+                $kind_raw = isset($row['kind']) && is_scalar($row['kind']) ? (string) $row['kind'] : 'post';
                 $known_kinds = array_merge(['term', 'cpt_archive'], array_keys(bulkseme_global_scopes()));
                 $kind = in_array($kind_raw, $known_kinds, true) ? $kind_raw : 'post';
 
@@ -961,7 +974,12 @@ add_action('rest_api_init', function () {
                     ];
                 }
             }
-            return ['count' => count($results), 'results' => $results];
+            $out = ['count' => count($results), 'results' => $results];
+            if ($skipped_rows) {
+                // Rows of an uploaded file whose cell count did not match the header.
+                $out['skipped_rows'] = $skipped_rows;
+            }
+            return $out;
         },
     ]);
 });

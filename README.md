@@ -15,7 +15,7 @@ command-line tools and your own scripts read and rewrite SEO titles, meta descri
 image alt text and the visible copy of a page, in bulk, over an authenticated REST API. Every page content edit is
 backed up first and can be undone.
 
-There is no AI inside the plugin and it makes no outbound requests. Each call signs in as a WordPress user and can
+There is no AI inside the plugin and it makes no requests of its own to any service. Each call signs in as a WordPress user and can
 only do what that user could do in wp-admin.
 
 Available in the official directory: **[wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/)**
@@ -246,6 +246,10 @@ The caller needs `edit_post` on the page (`edit_term` for a term), and where the
 ### `/wp-json/seo-meta-bridge/v1/merchant-policy` (2.0.0+)
 
 `POST { "return_policy": { ... }, "shipping": { ... } }` stores one return policy and shipping description. On WooCommerce product pages the plugin then adds `hasMerchantReturnPolicy`, `shippingDetails`, `brand` and a price start date to the Product schema your SEO plugin prints, where they are missing. `GET` shows what is stored and what would be printed. Needs `manage_options`.
+
+### `/wp-json/seo-meta-bridge/v1/update` (2.0.2+)
+
+`GET` shows the installed version and the version WordPress.org offers. `POST {"check": true}` asks WordPress to look for a new version now, `POST {"install": true}` installs the offered version the way the Update button does (the plugin stays active). It runs WordPress's own update code, so the build can only come from WordPress.org. Installing needs the right to update plugins, a site that forbids file changes is left alone, and an API key with the default scope cannot use the route.
 
 ## MCP server (Claude Code / Claude Desktop)
 

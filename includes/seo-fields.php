@@ -95,9 +95,10 @@ add_action('init', function () {
             ];
         }
 
-        if (in_array($key, $url_keys, true)) {
-            $args['sanitize_callback'] = 'esc_url_raw';
-        }
+        // Every key gets a cleaner that takes out bytes that are not valid UTF-8.
+        // The database refuses a value that holds them, and through wp/v2 that
+        // refusal is a 500. URL keys are cleaned as URLs on top of that.
+        $args['sanitize_callback'] = in_array($key, $url_keys, true) ? 'bulkseme_sanitize_url' : 'bulkseme_sanitize_meta_utf8';
 
         return $args;
     };
@@ -204,7 +205,17 @@ function bulkseme_active_keys() {
 function bulkseme_csv_line($cells) {
     $out = [];
     foreach ($cells as $cell) {
-        $cell = (string) $cell;
+        // One cell is one line. A post title can hold line breaks (WordPress keeps
+        // them), and a title that carried whole CSV lines used to come back from
+        // /import as rows of its own, written with the rights of whoever imported
+        // the file. No exported value needs a line break, so none leaves here.
+        // That covers every character some reader takes for a line break: CR and LF,
+        // vertical tab and form feed, the file, group and record separators (Python's
+        // splitlines() cuts at those), NEL, line separator and paragraph separator.
+        // All control characters but the tab go; none of them belongs in a cell.
+        $cell = str_replace(["\r\n", "\xC2\x85", "\xE2\x80\xA8", "\xE2\x80\xA9"], ' ', (string) $cell);
+        $bare = preg_replace('/[\x00-\x08\x0A-\x1F\x7F]/', ' ', $cell);
+        $cell = is_string($bare) ? $bare : $cell;
         // Spreadsheet formula injection: Excel, Google Sheets and LibreOffice run a
         // cell that starts with = + - @ (or a tab or carriage return) as a formula.
         // One leading apostrophe makes them show it as text. A cell that already
@@ -220,6 +231,76 @@ function bulkseme_csv_line($cells) {
     }
     // RFC 4180: CRLF terminators so multi-line cells parse correctly in Excel/Sheets/LibreOffice.
     return implode(',', $out) . "\r\n";
+}
+
+/**
+ * Read CSV text into rows of cells, the way RFC 4180 defines it: a quoted cell
+ * may hold commas, doubled quotes and line breaks, and stays one cell.
+ *
+ * /import used to cut the text at every line break first and read each piece as
+ * a row. A quoted cell that held line breaks was torn into rows that nobody
+ * with the right to write them had written. Returns [rows, ok]; ok is false
+ * when the text ends inside a quoted cell, which no well-formed file does.
+ * With $max_rows, reading stops once that many rows have been passed.
+ */
+function bulkseme_csv_parse($text, $max_rows = 0) {
+    $text   = (string) $text;
+    $rows   = [];
+    $row    = [];
+    $cell   = '';
+    $quoted = false; // inside a quoted cell
+    $any    = false; // the current row has content
+    $len    = strlen($text);
+    for ($i = 0; $i < $len; $i++) {
+        $ch = $text[$i];
+        if ($quoted) {
+            if ($ch !== '"') {
+                // Take the whole run up to the next quote in one step.
+                $run   = strcspn($text, '"', $i);
+                $cell .= substr($text, $i, $run);
+                $i    += $run - 1;
+            } elseif ($i + 1 < $len && $text[$i + 1] === '"') {
+                $cell .= '"';
+                $i++;
+            } else {
+                $quoted = false;
+            }
+            continue;
+        }
+        if ($ch === '"' && $cell === '') {
+            $quoted = true;
+            $any    = true;
+        } elseif ($ch === ',') {
+            $row[] = $cell;
+            $cell  = '';
+            $any   = true;
+        } elseif ($ch === "\r" || $ch === "\n") {
+            if ($ch === "\r" && $i + 1 < $len && $text[$i + 1] === "\n") {
+                $i++;
+            }
+            if ($any) {
+                $row[]  = $cell;
+                $rows[] = $row;
+                if ($max_rows && count($rows) > $max_rows) {
+                    return [$rows, true]; // more than the caller will take: stop reading
+                }
+            }
+            $row  = [];
+            $cell = '';
+            $any  = false;
+        } else {
+            $run   = strcspn($text, "\",\r\n", $i);
+            $run   = $run > 0 ? $run : 1; // a quote in the middle of an unquoted cell is just a character
+            $cell .= substr($text, $i, $run);
+            $i    += $run - 1;
+            $any   = true;
+        }
+    }
+    if ($any) {
+        $row[]  = $cell;
+        $rows[] = $row;
+    }
+    return [$rows, !$quoted];
 }
 
 /**
@@ -256,6 +337,77 @@ function bulkseme_scalar_text($value) {
         return (string) $value;
     }
     return null;
+}
+
+/**
+ * One request parameter as plain text.
+ *
+ * A parameter can arrive as a list or an object (?status[]=x, or a JSON array).
+ * Those have no text form: cast, they become the word "Array" with a PHP
+ * warning, and handed to a string function they end the request with a
+ * TypeError. Here they read as the default.
+ */
+function bulkseme_param_text($value, $default = '') {
+    return is_scalar($value) ? (string) $value : $default;
+}
+
+/**
+ * One request parameter as a record id. A list or an object is no id at all:
+ * cast to a number it would read as 1.
+ */
+function bulkseme_param_id($value) {
+    return is_scalar($value) ? absint($value) : 0;
+}
+
+/**
+ * One request parameter as a list of names: a comma-separated string or a list
+ * of strings. Anything nested is left out.
+ */
+function bulkseme_param_list($value) {
+    if (is_scalar($value)) {
+        $value = explode(',', (string) $value);
+    } elseif (!is_array($value)) {
+        return [];
+    }
+    $out = [];
+    foreach ($value as $v) {
+        if (is_scalar($v)) {
+            $v = trim((string) $v);
+            if ($v !== '') {
+                $out[] = $v;
+            }
+        }
+    }
+    return $out;
+}
+
+/**
+ * Registered SEO meta, on any write path: take out bytes that are not valid
+ * UTF-8, in a string or in a list of strings. Nothing else about the value is
+ * changed here; the SEO plugin's own cleaning still applies.
+ */
+function bulkseme_sanitize_meta_utf8($value) {
+    if (is_string($value)) {
+        $clean = wp_check_invalid_utf8($value, true);
+        return is_string($clean) ? $clean : '';
+    }
+    if (is_array($value)) {
+        return array_map('bulkseme_sanitize_meta_utf8', $value);
+    }
+    return $value;
+}
+
+/**
+ * Clean a URL field. Bytes that are not valid UTF-8 come out first: the
+ * database refuses a value that still holds them, and through WordPress's own
+ * REST routes that refusal is answered with a 500.
+ */
+function bulkseme_sanitize_url($value) {
+    if (!is_scalar($value)) {
+        return '';
+    }
+    $clean = wp_check_invalid_utf8((string) $value, true);
+    return esc_url_raw(is_string($clean) ? $clean : '');
 }
 
 /**
@@ -321,6 +473,11 @@ function bulkseme_user_can_seo_group($group, $user_id = 0) {
         // would strip it from the content of anyone below Editor. So it takes
         // an Editor, as with Yoast SEO's own default for schema settings.
         $allowed = user_can($user_id, 'edit_others_posts');
+    } elseif ($group === 'site') {
+        // Site-wide settings belong to administrators. Every caller checks that
+        // as well; the rule is stated here too so this function never answers
+        // yes for them by default.
+        $allowed = user_can($user_id, 'manage_options');
     }
     /**
      * Filters whether a user may edit one group of SEO settings through this plugin.
@@ -634,7 +791,7 @@ function bulkseme_apply_term_update($term_id, $taxonomy, $meta) {
                 $errors[] = "invalid_value_type:$key";
                 continue;
             }
-            $value = in_array($key, $url_keys, true) ? esc_url_raw($value) : bulkseme_sanitize_seo_text($value);
+            $value = in_array($key, $url_keys, true) ? bulkseme_sanitize_url($value) : bulkseme_sanitize_seo_text($value);
         }
         bulkseme_term_set_value($term_id, $taxonomy, $key, $value, $active['plugin']);
     }
@@ -1080,7 +1237,7 @@ function bulkseme_apply_update($post_id, $meta) {
                 $errors[] = "invalid_value_type:$key";
                 continue;
             }
-            $value = $is_url ? esc_url_raw($value) : bulkseme_sanitize_seo_text($value);
+            $value = $is_url ? bulkseme_sanitize_url($value) : bulkseme_sanitize_seo_text($value);
         }
         update_post_meta($post_id, $key, $value);
     }

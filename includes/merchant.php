@@ -682,9 +682,9 @@ add_action('rest_api_init', function () {
         [
             'methods'             => 'GET',
             'permission_callback' => $admin,
-            'args'                => ['id' => ['sanitize_callback' => 'absint']],
+            'args'                => ['id' => ['sanitize_callback' => 'bulkseme_param_id']],
             'callback'            => function (WP_REST_Request $req) {
-                return bulkseme_merchant_describe((int) $req->get_param('id'));
+                return bulkseme_merchant_describe(bulkseme_param_id($req->get_param('id')));
             },
         ],
         [

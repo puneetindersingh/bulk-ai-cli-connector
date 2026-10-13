@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.0.1
+Stable tag: 2.0.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -14,7 +14,7 @@ Connect Claude, ChatGPT and MCP agents to WordPress. Bulk edit SEO meta, schema,
 
 Bulk AI CLI Connector connects AI agents and command-line tools to a WordPress site. Claude, Claude Code, ChatGPT, an MCP client or a plain script can read and rewrite SEO titles, meta descriptions, JSON-LD schema, redirects, image alt text and the visible copy of a page, in bulk, over an authenticated REST API. Every page content edit is backed up first and can be undone.
 
-There is no AI inside the plugin and it sends nothing anywhere: it makes no outbound requests and needs no AI account. It gives the agent you already use a safe way into the site. Each call signs in as a WordPress user and can only do what that user could do in wp-admin.
+There is no AI inside the plugin and it sends nothing anywhere: it makes no requests of its own to any service and needs no AI account. It gives the agent you already use a safe way into the site. Each call signs in as a WordPress user and can only do what that user could do in wp-admin.
 
 = What you can do with it =
 
@@ -94,6 +94,7 @@ All endpoints live under `/wp-json/seo-meta-bridge/v1/` (or `?rest_route=/seo-me
 * `GET`, `POST`, `DELETE /redirect` (v2.0.0+): list, add or remove redirect rules
 * `GET`, `POST`, `DELETE /merchant-policy` (v2.0.0+): the return policy and shipping details added to WooCommerce Product schema
 * `POST /register-key` (v2.0.0+): store the hash of an API key from your own signed-in browser session
+* `GET`, `POST /update` (v2.0.2+): see which version is installed and which one WordPress.org offers, and install the offered version without opening wp-admin
 
 The standard WordPress REST route also works: `POST /wp/v2/posts/{id}` with a `meta` payload containing Yoast or Rank Math keys.
 
@@ -113,7 +114,7 @@ Plus robots, OG/Twitter description fields, and Rank Math primary-taxonomy keys.
 
 = MCP server for Claude Desktop and Claude Code =
 
-A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/tree/main/mcp-server and published to npm as `bulk-seo-meta-editor-mcp`. Add to Claude Desktop / Claude Code with one command and Claude can read, edit, bulk-update, and CSV-roundtrip SEO meta on any of your sites.
+A Node.js MCP server is bundled at https://github.com/puneetindersingh/bulk-ai-cli-connector/tree/main/mcp-server and published to npm as `bulk-seo-meta-editor-mcp`. Add to Claude Desktop / Claude Code with one command and Claude can read, edit, bulk-update, and CSV-roundtrip SEO meta on any of your sites.
 
 The MCP server has ten tools, for SEO meta and schema. Page content, redirects and the other routes added in 2.0 are REST routes: an agent that can send HTTP requests, Claude Code for example, calls them directly.
 
@@ -156,7 +157,7 @@ No. "CLI" in the name refers to the command-line agents and scripts on your own 
 
 = Does the plugin send my content to an AI service? =
 
-No. The plugin contains no AI and makes no outbound requests. It only answers REST calls from a signed-in WordPress user. What your agent does with the text it reads is between you and that agent.
+No. The plugin contains no AI and makes no requests of its own to any service. It only answers REST calls from a signed-in WordPress user. (The one exception is not about content: when asked through `/update`, it has WordPress check WordPress.org for a new version of this plugin and, if told to install it, download it from there.) What your agent does with the text it reads is between you and that agent.
 
 = How do I bulk edit meta descriptions in WordPress? =
 
@@ -212,7 +213,7 @@ You shouldn't. They conflict with each other in the front-end (duplicate meta ta
 
 = Is it safe to install on production? =
 
-Yes. The plugin does nothing until something calls the REST endpoints, and every call needs a signed-in user who could make the same change in wp-admin. SEO fields, schema, alt text and titles are checked per post. Since 2.0.0 page copy can be edited too: each write is cleaned with the post content allowlist, stores a backup first, and can be reverted. The plugin cannot create users, change settings outside its own, install anything, or run code that was sent to it.
+Yes. The plugin does nothing until something calls the REST endpoints, and every call needs a signed-in user who could make the same change in wp-admin. SEO fields, schema, alt text and titles are checked per post. Since 2.0.0 page copy can be edited too: each write is cleaned with the post content allowlist, stores a backup first, and can be reverted. The plugin cannot create users, change settings outside its own, or run code that was sent to it. The only thing it can install is its own update from WordPress.org (through `/update`, for users who may update plugins).
 
 = Can Claude or ChatGPT edit an Elementor or Beaver Builder page? =
 
@@ -234,7 +235,11 @@ No. Every value is cleaned with WordPress's post content allowlist (`wp_kses_pos
 
 An administrator makes a key on **Tools > Agent API Keys**. It is shown once and only its SHA-256 hash is stored, so a copy of the database holds nothing that can be replayed. A key signs REST API requests in as the account that made it, with that account's capabilities, and is removed when that account is deleted. It is read only for REST API requests over HTTPS, so wp-login.php, wp-admin, admin-ajax and XML-RPC never see it.
 
-By default a key is accepted on this plugin's own routes and nowhere else. If a tool also needs WordPress's own REST routes (to list posts or upload media, for example), make the key with the wider scope. Such a key is as powerful as an application password for your account, so store it like a password. Revoke any key on the same screen. To switch key sign-in off entirely: `add_filter('bulkseme_api_key_auth_enabled', '__return_false');`.
+By default a key is accepted on this plugin's own routes and nowhere else (and not on `/update`, which installs a new version of the plugin). If a tool also needs WordPress's own REST routes (to list posts or upload media, for example), make the key with the wider scope. Such a key is as powerful as an application password for your account, so store it like a password. Revoke any key on the same screen. To switch key sign-in off entirely: `add_filter('bulkseme_api_key_auth_enabled', '__return_false');`.
+
+= How do I keep the plugin up to date on sites I manage over the API? =
+
+Since 2.0.2 there is a route for it. `GET /update` shows the installed version and the version WordPress.org offers. `POST /update {"install": true}` installs the offered version straight away, the way the Update button does: the plugin stays active and the site shows its maintenance notice for a few seconds. `POST /update {"check": true}` asks WordPress to look for a new version now. The route runs WordPress's own update code, takes the build from WordPress.org and nowhere else, and cannot be given a file or an address. Installing needs the right to update plugins (an administrator, or a network administrator on a multisite), and a site that forbids file changes is left alone. An API key with the default scope cannot use this route: it takes a key with the wider scope, an application password or a browser session. The plugin does not change how WordPress updates plugins; automatic updates stay as you set them on the Plugins screen.
 
 = How do redirects work? =
 
@@ -265,6 +270,19 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted, plus the plugin's own `schema` and `schema_mode` fields and, since 1.9.0, `post_title`. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 2.0.2 =
+* Security: `/import` read an uploaded CSV file line by line, so one quoted cell that held line breaks was read as several rows. A post title can hold line breaks and `/export` wrote it as it was, so an Author could plant rows in a title, and they were applied with the rights of whoever re-imported that export: SEO fields of posts the Author may not edit, and the site-wide title settings. The file is now read as a whole, the way RFC 4180 defines it, and line breaks and other control characters are taken out of every exported cell. If you read an export in a script, use a CSV reader over the whole text, never line by line. Present in every earlier version. Found in an independent review; not known to have been used.
+* Security: stored JSON-LD schema is no longer printed on a password-protected post until the visitor has entered the password.
+* Security hardening: a key with the default scope signs in on this plugin's own routes by name, and no longer on everything under its REST namespace, so it cannot reach a route another plugin registers there.
+* Fix: `/export` ended with a PHP error when `post_type`, `status` or `taxonomy` was sent as a list (`?status[]=draft`). Lists are accepted now. A list sent where one value belongs is refused cleanly, and a list sent as an `id` is no longer read as post 1.
+* Fix: a URL field (canonical, Open Graph image, Twitter image) holding bytes that are not valid UTF-8, written through WordPress's own REST route, was answered with a 500. Such bytes no longer reach the database.
+* Hardening: WPBakery design rules rebuilt with `rebuild_wpb_css` go through the filter WordPress uses for inline styles. HTML written to a SiteOrigin widget or Beaver Builder module that the plugin has no field map for has the quotes in its text stored as entities.
+* `/import` of a file: 10 MB limit, a file that ends inside a quoted cell is refused, and rows whose cell count does not match the header are counted in `skipped_rows`.
+* New: `GET` and `POST /update`. See which version is installed and which one WordPress.org offers, and install the offered version without opening wp-admin. It runs WordPress's own update code, so the build can only come from WordPress.org; installing needs the right to update plugins, a site that forbids file changes is left alone, and a key with the default scope cannot use the route.
+* Security hardening: a key that is revoked here is also taken out of the copy a companion build keeps of the keys it handed over, whether or not that build is active at the time.
+* MCP server 1.7.2: `list_posts` lists only post types the site exposes, every tool argument that reaches a request path is checked, requests time out after 60 seconds, an answer over 20 MB is refused, and the dependency lock file is refreshed.
+* The GitHub repository moved to github.com/puneetindersingh/bulk-ai-cli-connector.
 
 = 2.0.1 =
 * Security hardening: `/clone` now checks a stored meta value in exactly the form WordPress reads it back. A value planted straight into the database with a NUL byte in front of a serialised object could get past the check that keeps `/clone` from recreating objects of other classes. Using it needed a row written outside WordPress and a caller with the `unfiltered_html` capability. Found in an independent review; not known to have been used.
@@ -403,6 +421,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.0.2 =
+Security release. Fixes a CSV import flaw that let an Author's post title change SEO fields when an administrator re-imported an export, and holds stored schema back on password-protected posts. Recommended for every site.
 
 = 2.0.1 =
 Security hardening for /clone. Recommended for every site on 2.0.0.

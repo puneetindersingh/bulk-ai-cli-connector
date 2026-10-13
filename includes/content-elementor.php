@@ -932,8 +932,8 @@ function bulkseme_content_apply_updates(array &$tree, array $updates, $force) {
     $results = [];
     $changed = 0;
     foreach ($updates as $u) {
-        $el      = isset($u['el']) ? (string) $u['el'] : '';
-        $setting = isset($u['setting']) ? (string) $u['setting'] : '';
+        $el      = isset($u['el']) && is_scalar($u['el']) ? (string) $u['el'] : '';
+        $setting = isset($u['setting']) && is_scalar($u['setting']) ? (string) $u['setting'] : '';
         $base    = ['el' => $el, 'setting' => $setting];
         if ($el === '' || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $el)) {
             $results[] = $base + ['status' => 'invalid_value', 'errors' => ['missing_or_invalid_el']];
