@@ -59,7 +59,7 @@ wp plugin install bulk-seo-meta-editor-for-ai-agents --activate
 
 ### Option 3: zip upload
 
-1. Download the zip from [WordPress.org](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/) or from [Releases](https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/releases)
+1. Download the zip from [WordPress.org](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/) or from [Releases](https://github.com/puneetindersingh/bulk-ai-cli-connector/releases)
 2. WP admin, **Plugins → Add New → Upload Plugin**
 3. Activate
 

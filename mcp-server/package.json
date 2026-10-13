@@ -29,14 +29,14 @@
   ],
   "author": "Puneet Singh <puneetindersingh@gmail.com> (https://github.com/puneetindersingh)",
   "license": "GPL-2.0-or-later",
-  "homepage": "https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents",
+  "homepage": "https://github.com/puneetindersingh/bulk-ai-cli-connector",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents.git",
+    "url": "git+https://github.com/puneetindersingh/bulk-ai-cli-connector.git",
     "directory": "mcp-server"
   },
   "bugs": {
-    "url": "https://github.com/puneetindersingh/bulk-seo-meta-editor-for-ai-agents/issues"
+    "url": "https://github.com/puneetindersingh/bulk-ai-cli-connector/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
