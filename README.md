@@ -370,3 +370,5 @@ GPL-2.0-or-later.
 ## Author
 
 [Puneet Singh](https://github.com/puneetindersingh).
+
+More free SEO tools from the same maker, including a self-hosted SEO crawler and the SEO Side Panel Chrome extension: **[puneetindersingh.github.io](https://puneetindersingh.github.io/)**
