@@ -26,7 +26,7 @@ function bulkseme_backup_keep() {
 
 /** Content kinds a backup can hold. */
 function bulkseme_backup_kinds() {
-    return ['post_content', 'elementor', 'siteorigin', 'accordions', 'beaver', 'acf', 'term_description'];
+    return ['post_content', 'elementor', 'siteorigin', 'accordions', 'beaver', 'acf', 'acf_rows', 'term_description'];
 }
 
 add_action('init', function () {
@@ -89,7 +89,7 @@ function bulkseme_backup_ids($owner) {
  * Store one backup and trim the item's backups to the newest ten.
  * Returns the backup id (the `ts` the API hands out), or 0 when it could not be stored.
  */
-function bulkseme_backup_add($owner, $parent_post_id, $kind, $raw, $note, array $extra = []) {
+function bulkseme_backup_add($owner, $parent_post_id, $kind, $raw, $note, array $extra = [], $trim = true) {
     if (!in_array($kind, bulkseme_backup_kinds(), true)) {
         return 0;
     }
@@ -121,11 +121,43 @@ function bulkseme_backup_add($owner, $parent_post_id, $kind, $raw, $note, array 
         wp_delete_post($id, true);
         return 0;
     }
+    if ($trim) {
+        bulkseme_backup_trim($owner);
+    }
+    return (int) $id;
+}
+
+/** Trim one item's backups to the newest ten. */
+function bulkseme_backup_trim($owner) {
     $ids = bulkseme_backup_ids($owner);
     while (count($ids) > bulkseme_backup_keep()) {
         wp_delete_post(array_shift($ids), true);
     }
-    return (int) $id;
+}
+
+/**
+ * Replace the payload of one backup of that same item (used to add, to the backup
+ * kept after a row insert whose rollback could not finish, the list of keys that
+ * insert wrote). Returns true when it was stored.
+ */
+function bulkseme_backup_amend($owner, $id, $raw) {
+    $env = bulkseme_backup_get($owner, $id);
+    if ($env === null) {
+        return false;
+    }
+    $env['data'] = (string) $raw;
+    $json        = wp_json_encode($env);
+    return $json !== false && (bool) update_post_meta((int) $id, '_bulkseme_backup', wp_slash($json));
+}
+
+/**
+ * Remove one backup that turned out not to be needed (the write it was taken
+ * for was refused and undone). Only a backup of that same item is removed.
+ */
+function bulkseme_backup_drop($owner, $id) {
+    if (bulkseme_backup_get($owner, $id) !== null) {
+        wp_delete_post((int) $id, true);
+    }
 }
 
 /**
@@ -206,8 +238,8 @@ function bulkseme_term_content_take_backup($term_id, $raw, $note = 'pre-update')
     return bulkseme_backup_add('term:' . (int) $term_id, 0, 'term_description', $raw, $note);
 }
 
-/** One backup of a term, or null. */
+/** One backup of a term (its description, or its ACF fields), or null. */
 function bulkseme_term_content_read_backup($term_id, $id) {
     $env = bulkseme_backup_get('term:' . (int) $term_id, $id);
-    return ($env && $env['kind'] === 'term_description') ? $env : null;
+    return ($env && in_array($env['kind'], ['term_description', 'acf', 'acf_rows'], true)) ? $env : null;
 }

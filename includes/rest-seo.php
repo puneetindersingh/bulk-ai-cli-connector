@@ -191,6 +191,8 @@ add_action('rest_api_init', function () {
                 'supports_accordions' => true,
                 'supports_beaver'   => true,
                 'supports_acf'      => bulkseme_acf_active(),
+                'supports_acf_rows' => bulkseme_acf_active(),
+                'supports_term_acf' => bulkseme_acf_active(),
                 'supports_redirects' => true,
                 'supports_update'   => true,
                 'drops_invalid_product_schema' => (bool) apply_filters('bulkseme_drop_invalid_product_schema', true),

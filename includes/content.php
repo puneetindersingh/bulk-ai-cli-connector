@@ -221,7 +221,37 @@ function bulkseme_content_utf8($value) {
  * page caches, sitemaps and the SEO plugin's own index notice the change.
  */
 function bulkseme_content_touch($post_id) {
-    wp_update_post(['ID' => (int) $post_id]);
+    $post = get_post((int) $post_id);
+    if (!$post) {
+        return;
+    }
+    // wp_update_post() sends the stored title, content and excerpt through the
+    // save filters again (kses, for a user without unfiltered_html), which can
+    // rewrite markup nobody asked to change. Only the modified date is wanted
+    // here, so those fields go back exactly as they are stored: for this post on
+    // this site, and for this one save only (a save another plugin starts from a
+    // hook during it is left alone).
+    $blog  = get_current_blog_id();
+    $fired = false;
+    $keep  = function ($data, $postarr) use ($post, $blog, &$fired) {
+        if ($fired || get_current_blog_id() !== $blog || !is_array($postarr) || !isset($postarr['ID']) || (int) $postarr['ID'] !== (int) $post->ID) {
+            return $data;
+        }
+        $fired                         = true;
+        $data['post_title']            = wp_slash($post->post_title);
+        $data['post_content']          = wp_slash($post->post_content);
+        $data['post_excerpt']          = wp_slash($post->post_excerpt);
+        $data['post_content_filtered'] = wp_slash($post->post_content_filtered);
+        return $data;
+    };
+    add_filter('wp_insert_post_data', $keep, PHP_INT_MAX, 2);
+    add_filter('wp_insert_attachment_data', $keep, PHP_INT_MAX, 2); // attachments are saved through this one instead
+    try {
+        wp_update_post(['ID' => (int) $post->ID]);
+    } finally {
+        remove_filter('wp_insert_post_data', $keep, PHP_INT_MAX);
+        remove_filter('wp_insert_attachment_data', $keep, PHP_INT_MAX);
+    }
 }
 
 /**
@@ -345,6 +375,7 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
         $out['acf_version'] = bulkseme_acf_version();
         $out['data_hash']   = md5(bulkseme_acf_encode($data));
         $out['nodes']       = bulkseme_acf_public_nodes($data);
+        $out['containers']  = bulkseme_acf_public_containers($data);
         $out['skipped']     = $data['skipped'];
         if ($req->get_param('raw')) {
             $out['raw'] = $data['raw'];
@@ -361,9 +392,10 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
             $acf = bulkseme_acf_load($id);
             if (!is_wp_error($acf)) {
                 $out['acf'] = [
-                    'data_hash' => md5(bulkseme_acf_encode($acf)),
-                    'nodes'     => bulkseme_acf_public_nodes($acf),
-                    'skipped'   => $acf['skipped'],
+                    'data_hash'  => md5(bulkseme_acf_encode($acf)),
+                    'nodes'      => bulkseme_acf_public_nodes($acf),
+                    'containers' => bulkseme_acf_public_containers($acf),
+                    'skipped'    => $acf['skipped'],
                 ];
             }
         }
@@ -662,7 +694,7 @@ function bulkseme_rest_content_revert(WP_REST_Request $req) {
     }
     // The backup may come from a builder the page no longer uses, so that builder's rule is checked too.
     if ($env['kind'] !== 'post_content') {
-        $gate = bulkseme_content_builder_gate($env['kind'], $post);
+        $gate = bulkseme_content_builder_gate($env['kind'] === 'acf_rows' ? 'acf' : $env['kind'], $post);
         if (is_wp_error($gate)) {
             return $gate;
         }
@@ -691,7 +723,7 @@ function bulkseme_rest_content_revert(WP_REST_Request $req) {
             'data_hash' => md5($restore),
         ], $side);
     }
-    if ($env['kind'] === 'acf') {
+    if ($env['kind'] === 'acf' || $env['kind'] === 'acf_rows') {
         return bulkseme_acf_revert($post, $env, $ts);
     }
     if ($env['kind'] === 'siteorigin' || $env['kind'] === 'accordions' || $env['kind'] === 'beaver') {

@@ -24,7 +24,7 @@ What you can do with it:
 
 - **Connect Claude or ChatGPT to WordPress**: Claude Code and other command-line agents call the REST routes directly, Claude Desktop connects through the bundled MCP server, and n8n, Zapier, Make or any script works over plain HTTPS
 - **Bulk edit Yoast SEO and Rank Math meta** (up to 100 posts, pages, products or term archives per call): titles, descriptions, canonical, robots, Open Graph and Twitter fields. Works on the free editions
-- **Edit Elementor and Beaver Builder pages with an AI agent** (2.0.0+): read a page's headings, paragraphs, button labels and list items as a list and change only the ones you name. SiteOrigin Page Builder, Advanced Custom Fields text fields, Gutenberg, the classic editor, Divi and WPBakery pages are covered too
+- **Edit Elementor and Beaver Builder pages with an AI agent** (2.0.0+): read a page's headings, paragraphs, button labels and list items as a list and change only the ones you name. SiteOrigin Page Builder, Advanced Custom Fields text fields (and, from 2.1.0, new rows in ACF repeaters and flexible content, and ACF fields on terms), Gutenberg, the classic editor, Divi and WPBakery pages are covered too
 - **Undo and dry run** (2.0.0+): every page content write stores the previous version first, `dry_run` shows what would change and writes nothing
 - **Custom JSON-LD schema** per post and per taxonomy term (FAQPage, Service, LocalBusiness, HowTo, any type), merged into the active SEO plugin's schema graph, or printed as the plugin's own block when no SEO plugin graph is on the page (1.9.0+)
 - **Redirects, page copies and WooCommerce merchant listing fields** (2.0.0+)
@@ -222,7 +222,7 @@ Change the ones you name and nothing else:
     POST /wp-json/seo-meta-bridge/v1/content
     { "id": 123, "base_hash": "...", "updates": [ { "el": "3f9a21c", "setting": "title", "value": "New heading" } ] }
 
-- **Builders with nodes:** Elementor (classic and atomic widgets, heading level, link URLs), Beaver Builder, SiteOrigin Page Builder, the Accordions plugin, Advanced Custom Fields text fields.
+- **Builders with nodes:** Elementor (classic and atomic widgets, heading level, link URLs), Beaver Builder, SiteOrigin Page Builder, the Accordions plugin, Advanced Custom Fields text fields. ACF repeaters and flexible content also take new rows (`op: add_row`, see `containers` in `GET /content`), and `kind=term` reaches a term's ACF fields.
 - **Pages that keep their text in post content** (Gutenberg, classic, Divi, WPBakery): send `"post_content": "..."` instead of `updates`.
 - **Term descriptions:** add `"kind": "term", "taxonomy": "product_cat"` and send `"description"`.
 - `"dry_run": true` reports what would change and writes nothing. `base_hash` refuses the write if the page changed since you read it.

@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.0.2
+Stable tag: 2.1.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -46,7 +46,7 @@ This plugin was called Bulk SEO Meta Editor for AI Agents up to version 1.9.1. S
 
 Version 2.0 goes past SEO fields. The same REST API can now read and change the visible text of a page, wherever the site keeps it:
 
-* **Page builders**: Elementor (including Elementor 4 atomic widgets), Beaver Builder, SiteOrigin Page Builder, and text fields in Advanced Custom Fields. These keep a page in post meta, where the core REST API cannot reach it. The plugin lists every piece of text as a node and changes only the ones you name. Layout, styling and widgets it does not know are written back exactly as they were read.
+* **Page builders**: Elementor (including Elementor 4 atomic widgets), Beaver Builder, SiteOrigin Page Builder, and text fields in Advanced Custom Fields. These keep a page in post meta, where the core REST API cannot reach it. The plugin lists every piece of text as a node and changes only the ones you name. Layout, styling and widgets it does not know are written back exactly as they were read. In Advanced Custom Fields it can also add a row to a repeater or flexible content field (an FAQ item, a product tab), and edit the ACF fields of a category or any other taxonomy term.
 * **Gutenberg, classic editor, Divi and WPBakery**: read and replace the post content, or run a literal find and replace across it.
 * **Term descriptions**: category and product category introductions keep their headings, lists and tables.
 * **Undo for every edit**: each write stores the previous version first. `GET /content/backups` lists what can be restored and `POST /content/revert` puts it back. The newest ten are kept per page.
@@ -71,7 +71,7 @@ Version 2.0 goes past SEO fields. The same REST API can now read and change the 
 * **Post titles** (v1.9.0+): send `post_title` in a `/bulk` item to rename a post; the slug is never touched
 * **Sitemap refresh** (v1.9.0+): `POST /sitemap/flush` clears the Yoast or Rank Math sitemap cache after REST edits
 * **Invalid Product schema guard** (v1.9.0+): drops `Product` nodes that carry no `offers`, `review` or `aggregateRating`, the ones Search Console reports as invalid on quote-only WooCommerce catalogues. Disable with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false')`
-* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write
+* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write. From v2.1.0: add rows to ACF repeaters and flexible content, and edit ACF fields on terms
 * **Redirects, page copies and merchant listing fields** (v2.0.0+): see "New in 2.0" above
 * **API keys** (v2.0.0+): a second way to sign in, next to application passwords
 
@@ -271,6 +271,15 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.1.0 =
+* New: add a row to an Advanced Custom Fields repeater or flexible content field. Send an update `{"op": "add_row", "el": "<field>", "position": 2, "layout": "<layout>", "values": {"<sub field>": "text"}}` in `POST /content`. `GET /content` lists every repeater and flexible content field under `containers`, with its row count and the sub fields a new row may fill. The rows below the insert move down with every value they hold, images and nested rows included. Text is cleaned like any other write, the field's maximum row count holds, and a stored value that belongs to another field, or that names a PHP class, stops the insert before anything is written. The backup holds the whole field, so `/content/revert` puts the rows back exactly.
+* New: Advanced Custom Fields on taxonomy terms. With `kind=term`, `GET /content` lists the term's ACF text fields and rows under `acf`, and `POST /content` with `updates[]` edits them and adds rows, with the same backup and revert as on posts. The term description is left alone.
+* Fix: a write to text kept in post meta (ACF, Beaver Builder, SiteOrigin, Accordions, and Elementor when its own resync is not available) bumped the modified date by saving the post again. For a user without unfiltered_html that ran the stored title, content and excerpt through kses and could rewrite markup the write never aimed at, such as the trailing semicolon of a `style` attribute. Only the date changes now.
+* Security hardening: `kind=term` no longer reaches a taxonomy that has neither an edit screen nor a REST route (such as post formats), the same reach WordPress itself gives. Present since 2.0.0.
+* Security hardening: on a network, the fallback that reads ACF field definitions from stored meta when no field group matches is for super admins only.
+* New filter `bulkseme_user_can_edit_term_acf` keeps a role out of a term's ACF fields, as `bulkseme_user_can_edit_with_builder` does for posts.
+* `/status` reports `supports_acf_rows` and `supports_term_acf`.
+
 = 2.0.2 =
 * Security: `/import` read an uploaded CSV file line by line, so one quoted cell that held line breaks was read as several rows. A post title can hold line breaks and `/export` wrote it as it was, so an Author could plant rows in a title, and they were applied with the rights of whoever re-imported that export: SEO fields of posts the Author may not edit, and the site-wide title settings. The file is now read as a whole, the way RFC 4180 defines it, and line breaks and other control characters are taken out of every exported cell. If you read an export in a script, use a CSV reader over the whole text, never line by line. Present in every earlier version. Found in an independent review; not known to have been used.
 * Security: stored JSON-LD schema is no longer printed on a password-protected post until the visitor has entered the password.
@@ -421,6 +430,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.1.0 =
+Adds rows to ACF repeaters and flexible content, and ACF fields on terms. If you filter `bulkseme_user_can_edit_with_builder` to keep a role out of ACF, add the same rule to the new `bulkseme_user_can_edit_term_acf`.
 
 = 2.0.2 =
 Security release. Fixes a CSV import flaw that let an Author's post title change SEO fields when an administrator re-imported an export, and holds stored schema back on password-protected posts. Recommended for every site.
