@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.2.0
+Stable tag: 2.3.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,6 +15,10 @@ Connect Claude, ChatGPT and MCP agents to WordPress. Bulk edit SEO meta, schema,
 Bulk AI CLI Connector connects AI agents and command-line tools to a WordPress site. Claude, Claude Code, ChatGPT, an MCP client or a plain script can read and rewrite SEO titles, meta descriptions, JSON-LD schema, redirects, image alt text and the visible copy of a page, in bulk, over an authenticated REST API. Every page content edit is backed up first and can be undone.
 
 There is no AI inside the plugin and it sends nothing anywhere: it makes no requests of its own to any service and needs no AI account. It gives the agent you already use a safe way into the site. Each call signs in as a WordPress user and can only do what that user could do in wp-admin.
+
+= See what is live, where you work =
+
+New in 2.3: an SEO item in the admin bar on every page you can edit. It opens a panel over the page with what the page really sends to search engines (title, description, robots, canonical, social tags, headings, every JSON-LD block), read from the page itself, so it is true whichever plugin printed it. Problems are marked, the title and description can be changed in place, custom schema can be added, and a history lists every SEO change on the page with who made it and how: in the editor, through an API key, or from the panel. The block editor and the classic editor get the same live view beside the post.
 
 = What you can do with it =
 
@@ -271,6 +275,12 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.3.0 =
+* New: live SEO panel. Signed-in users who may edit the page in view get an "SEO" item in the admin bar with a count of problems. It opens a panel over the page with four tabs. Overview: the search result and every tag read from the rendered page (title, description, robots including an X-Robots-Tag header, canonical, H1, social tags, images, links), each judged. Edit: SEO title, description and focus keyword with length checks, saved into Yoast SEO or Rank Math. Schema: every JSON-LD block with the plugin that printed it, missing required and recommended properties, duplicate Organization or WebSite nodes, broken JSON, links to an @id that is not on the page; custom schema can be added or set to replace the page's schema. History: the SEO changes on this post.
+* New: change history. Every change to a post's SEO title, description, keyword, canonical, robots, social fields or custom schema is kept on the post (the last 30), with the time, the user and where it came from: the editor, an API key, the REST API, WP-CLI or the live panel.
+* New: "Live on the site" in the block editor's document sidebar and as a side box in the classic editor: what the published page sends, read again after every save, with the last changes.
+* New route `POST /live`, for the panel only. It needs a signed-in browser session with a REST nonce (keys and application passwords use `/bulk`), the right to edit that post or term, and each field passes the same checks as in `/bulk`, including the SEO plugin's own role rules for its settings groups.
+
 = 2.2.0 =
 * New: Elementor choice settings in `/content`. Dropdown, choose and switch controls on a widget's Content tab, including the fields of repeater rows (for example a Post Info row's `type`, `taxonomy` and `link`), are listed with `kind: choice` and their `options`. A write is accepted only when the value is one of those options. Heading levels stay `kind: tag`. Needs Elementor running, because the options come from its registered controls.
 * New: add an Elementor element by copying an existing one. `POST /content {"inserts": [{"ref": "<element id>", "position": "after", "copy_from": {"post_id": 123, "el": "<element id>"}}]}` clones an element from the same page or another Elementor page you can edit, with new element and row ids and without its CSS ID, before, after or inside `ref`. Elements only go where Elementor accepts them (a section placed in a column becomes an inner section). Up to 20 per request, applied before `updates[]`, with the usual dry run, base_hash, backup and revert. New `atomic=1` writes nothing when any update or insert in the request fails.
@@ -436,6 +446,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.3.0 =
+Adds a live SEO panel on the site and in the editors, and a history of SEO changes per post. Nothing changes in what your pages print.
 
 = 2.2.0 =
 Adds Elementor dropdown and switch settings and inserting an element by copy, both checked against Elementor's own permissions and capped for accounts without unfiltered_html.

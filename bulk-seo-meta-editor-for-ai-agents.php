@@ -3,7 +3,7 @@
  * Plugin Name: Bulk AI CLI Connector: Edit Pages, SEO and Schema with Claude, ChatGPT and MCP Agents
  * Plugin URI:  https://github.com/puneetindersingh/bulk-ai-cli-connector
  * Description: Lets AI agents (Claude, ChatGPT, Perplexity) and automation scripts work on a site over the REST API: bulk-update Yoast SEO or Rank Math titles, descriptions and schema, edit page copy in Elementor, Beaver Builder, SiteOrigin, ACF and block or classic pages with a backup before every write, manage redirects, and sign in with an application password or an API key. Includes CSV import and export and a bundled MCP server.
- * Version: 2.2.0
+ * Version: 2.3.0
  * Author: Puneet Singh
  * Author URI: https://github.com/puneetindersingh
  * License: GPL-2.0-or-later
@@ -13,7 +13,7 @@
 if (!defined('ABSPATH')) exit;
 
 // Keep in sync with the `Version:` header line above on every release.
-define('BULKSEME_VERSION', '2.2.0');
+define('BULKSEME_VERSION', '2.3.0');
 
 define('BULKSEME_FILE', __FILE__);
 define('BULKSEME_DIR', __DIR__);
@@ -27,6 +27,8 @@ require_once BULKSEME_DIR . '/includes/rest-seo.php';
 // Signing in with an API key.
 require_once BULKSEME_DIR . '/includes/key-auth.php';
 require_once BULKSEME_DIR . '/includes/admin.php';
+// What a page sends to search engines, shown where people work on it.
+require_once BULKSEME_DIR . '/includes/live-panel.php';
 
 // Page content, for each place a site keeps it.
 require_once BULKSEME_DIR . '/includes/backups.php';

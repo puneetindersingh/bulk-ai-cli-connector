@@ -500,7 +500,8 @@ add_action('rest_api_init', function () {
                     continue;
                 }
 
-                $ok = update_post_meta($aid, '_wp_attachment_image_alt', $clean);
+                // update_post_meta() unslashes what it is given; slash it so a backslash survives.
+                $ok = update_post_meta($aid, '_wp_attachment_image_alt', wp_slash($clean));
                 if ($ok === false) {
                     $results[] = [
                         'image_url'     => $url,

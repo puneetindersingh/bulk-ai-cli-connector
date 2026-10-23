@@ -646,7 +646,8 @@ function bulkseme_term_get_value($term_id, $taxonomy, $meta_key, $plugin) {
  */
 function bulkseme_term_set_value($term_id, $taxonomy, $meta_key, $value, $plugin) {
     if ($plugin === 'rankmath') {
-        update_term_meta($term_id, $meta_key, $value);
+        // update_term_meta() unslashes what it is given; slash it so a backslash survives.
+        update_term_meta($term_id, $meta_key, wp_slash($value));
         return true;
     }
     if ($plugin === 'yoast') {
@@ -1239,7 +1240,8 @@ function bulkseme_apply_update($post_id, $meta) {
             }
             $value = $is_url ? bulkseme_sanitize_url($value) : bulkseme_sanitize_seo_text($value);
         }
-        update_post_meta($post_id, $key, $value);
+        // update_post_meta() unslashes what it is given; slash it so a backslash survives.
+        update_post_meta($post_id, $key, wp_slash($value));
     }
     return ['ok' => empty($errors), 'errors' => $errors];
 }
