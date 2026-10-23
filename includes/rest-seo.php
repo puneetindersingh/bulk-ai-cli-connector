@@ -183,6 +183,8 @@ add_action('rest_api_init', function () {
                 'supports_api_key'  => true,
                 'supports_content'  => true,
                 'supports_layout_settings' => true,
+                'supports_choice_settings' => true,
+                'supports_inserts' => true,
                 'supports_atomic_widgets'  => true,
                 'supports_term_content'    => true,
                 'supports_clone'    => true,

@@ -298,6 +298,833 @@ function bulkseme_elementor_layout_settings($widget_type) {
     return $map;
 }
 
+// ---- Choice settings: selects, switchers, choose controls (2.2.0) ------------
+// Content-tab SELECT / CHOOSE / SWITCHER controls (a post-info row's `type`,
+// `taxonomy` and `link`, a loop grid's pagination type, ...). A value is only
+// accepted when it is one of the control's own option keys, so nothing can be
+// written that Elementor's editor could not have saved itself. Heading-level
+// selects stay with the layout map above. Live introspection only: without
+// Elementor running there is no option list to validate against.
+
+/**
+ * Decide whether one registered control is a choice setting we expose.
+ * Returns ['choice' => keys, 'default' => key] | ['repeater' => [field => spec]] | null.
+ */
+function bulkseme_elementor_choice_control_spec($name, $ctl, $in_repeater = false) {
+    if (!is_string($name) || $name === '' || $name[0] === '_') {
+        return null;
+    }
+    if (!is_array($ctl) || empty($ctl['type']) || !is_string($ctl['type'])) {
+        return null;
+    }
+    if (preg_match('/(_css|_class(es)?|_id)$/', $name)) {
+        return null;
+    }
+    if (!$in_repeater && isset($ctl['tab']) && $ctl['tab'] !== 'content') {
+        return null;
+    }
+    $type = $ctl['type'];
+    if ($type === 'switcher') {
+        $on = (isset($ctl['return_value']) && is_scalar($ctl['return_value']) && (string) $ctl['return_value'] !== '') ? (string) $ctl['return_value'] : 'yes';
+        $default = (isset($ctl['default']) && is_scalar($ctl['default'])) ? (string) $ctl['default'] : '';
+        return ['choice' => [$on, ''], 'default' => $default === $on ? $on : ''];
+    }
+    if ($type === 'select' || $type === 'choose') {
+        if (empty($ctl['options']) || !is_array($ctl['options'])) {
+            return null;
+        }
+        $keys = array_map('strval', array_keys($ctl['options']));
+        $tags = bulkseme_elementor_tag_options();
+        if (!array_diff($keys, $tags) && in_array('h1', $keys, true)) {
+            return null; // heading level: owned by the layout map
+        }
+        $default = (isset($ctl['default']) && is_scalar($ctl['default'])) ? (string) $ctl['default'] : '';
+        if ($type === 'choose' && !in_array('', $keys, true)) {
+            $keys[] = ''; // a choose control can be cleared in the editor
+        }
+        return ['choice' => array_values($keys), 'default' => $default];
+    }
+    if (!$in_repeater && $type === 'repeater' && !empty($ctl['fields']) && is_array($ctl['fields'])) {
+        $fields = [];
+        foreach ($ctl['fields'] as $fkey => $fctl) {
+            $fname = (is_array($fctl) && isset($fctl['name']) && is_string($fctl['name'])) ? $fctl['name'] : $fkey;
+            $spec  = bulkseme_elementor_choice_control_spec($fname, $fctl, true);
+            if ($spec !== null) {
+                $fields[$fname] = $spec;
+            }
+        }
+        if ($fields) {
+            return ['repeater' => $fields];
+        }
+    }
+    return null;
+}
+
+/** Choice settings for one widget type (live introspection; empty when Elementor is inactive). */
+function bulkseme_elementor_choice_settings($widget_type) {
+    static $cache = [];
+    if (array_key_exists($widget_type, $cache)) {
+        return $cache[$widget_type];
+    }
+    $map = [];
+    if (bulkseme_elementor_active()) {
+        try {
+            $widget = \Elementor\Plugin::$instance->widgets_manager->get_widget_types($widget_type);
+            if ($widget && method_exists($widget, 'get_controls')) {
+                $controls = $widget->get_controls();
+                if (is_array($controls)) {
+                    foreach ($controls as $name => $ctl) {
+                        $spec = bulkseme_elementor_choice_control_spec($name, $ctl);
+                        if ($spec !== null) {
+                            $map[$name] = $spec;
+                        }
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            $map = [];
+        }
+    }
+    $cache[$widget_type] = $map;
+    return $map;
+}
+
+/** Write one choice control. $spec = ['choice' => keys, 'default' => key]. $settings may be a repeater row. */
+function bulkseme_elementor_apply_choice(array &$settings, $key, array $spec, $value) {
+    $v = (string) $value;
+    if (!in_array($v, $spec['choice'], true)) {
+        return ['status' => 'invalid_value', 'errors' => ['choice_not_allowed'], 'allowed' => $spec['choice']];
+    }
+    if (isset($settings[$key]) && !is_scalar($settings[$key])) {
+        return ['status' => 'setting_not_editable', 'errors' => ['stored_value_not_scalar']];
+    }
+    $prev = isset($settings[$key]) ? (string) $settings[$key] : $spec['default'];
+    if ($v === $prev) {
+        return ['status' => 'unchanged', 'previous' => $prev];
+    }
+    $settings[$key] = $v;
+    return ['status' => 'ok', 'previous' => $prev, 'new' => $v];
+}
+
+// ---- Inserts by copy (2.2.0) ----------------------------------------------------
+// POST /content {inserts:[{ref, position, copy_from:{post_id?, el}}]} clones an
+// existing element (from this post or another Elementor post the caller can
+// edit) next to or inside `ref`, with fresh element and repeater-row ids. Only
+// copies of what Elementor itself saved go in, never settings we compose.
+
+/** Every element id in a tree. */
+function bulkseme_elementor_collect_ids(array $elements, array &$ids) {
+    foreach ($elements as $el) {
+        if (!is_array($el)) {
+            continue;
+        }
+        if (isset($el['id'])) {
+            $ids[(string) $el['id']] = true;
+        }
+        if (!empty($el['elements']) && is_array($el['elements'])) {
+            bulkseme_elementor_collect_ids($el['elements'], $ids);
+        }
+    }
+}
+
+/** A 7-hex id not in $ids (which it then claims). */
+function bulkseme_elementor_new_id(array &$ids) {
+    do {
+        $id = sprintf('%07x', wp_rand(0, 0xfffffff));
+    } while (isset($ids[$id]) || ctype_digit($id));
+    $ids[$id] = true;
+    return $id;
+}
+
+/** Remove the element with this id from a tree (at any depth). True when it was found. */
+function bulkseme_elementor_remove_node(array &$elements, $el_id) {
+    $elements = array_values($elements); // splice offsets are positions, never stored keys
+    foreach ($elements as $i => &$el) {
+        if (!is_array($el)) {
+            continue;
+        }
+        if (isset($el['id']) && (string) $el['id'] === $el_id) {
+            unset($el);
+            array_splice($elements, $i, 1);
+            return true;
+        }
+        if (!empty($el['elements']) && is_array($el['elements']) && bulkseme_elementor_remove_node($el['elements'], $el_id)) {
+            unset($el);
+            return true;
+        }
+    }
+    unset($el);
+    return false;
+}
+
+/** Every element id in one element's subtree, in tree order (duplicates kept once). */
+function bulkseme_elementor_ids_of(array $node) {
+    $ids = [];
+    bulkseme_elementor_collect_ids([$node], $ids);
+    return array_map('strval', array_keys($ids));
+}
+
+/** Copy of the element with this id, or null. */
+function bulkseme_elementor_find_node(array $elements, $el_id) {
+    foreach ($elements as $el) {
+        if (!is_array($el)) {
+            continue;
+        }
+        if (isset($el['id']) && (string) $el['id'] === $el_id) {
+            return $el;
+        }
+        if (!empty($el['elements']) && is_array($el['elements'])) {
+            $hit = bulkseme_elementor_find_node($el['elements'], $el_id);
+            if ($hit !== null) {
+                return $hit;
+            }
+        }
+    }
+    return null;
+}
+
+/** Give an element (and its children and repeater rows) fresh ids. Returns old => new element ids. */
+function bulkseme_elementor_reid(array &$el, array &$ids) {
+    $map = [];
+    if (isset($el['id'])) {
+        $new = bulkseme_elementor_new_id($ids);
+        $map[(string) $el['id']] = $new;
+        $el['id'] = $new;
+    }
+    // Elementor 4 local styles are keyed by an id the element's `classes` prop points at; a copy
+    // gets its own, or two elements would share (and fight over) one style definition.
+    if (isset($el['styles']) && is_array($el['styles']) && $el['styles'] && isset($el['id'])) {
+        $smap = [];
+        $restyled = [];
+        foreach ($el['styles'] as $sid => $style) {
+            $nsid = 'e-' . $el['id'] . '-' . sprintf('%07x', wp_rand(0, 0xfffffff));
+            $smap[(string) $sid] = $nsid;
+            if (is_array($style) && isset($style['id'])) {
+                $style['id'] = $nsid;
+            }
+            $restyled[$nsid] = $style;
+        }
+        $el['styles'] = $restyled;
+        if (isset($el['settings']) && is_array($el['settings'])) {
+            bulkseme_elementor_rekey_classes($el['settings'], $smap);
+        }
+    }
+    if (isset($el['settings']) && is_array($el['settings'])) {
+        // The Advanced-tab CSS ID would repeat on the page: a copy starts without one.
+        unset($el['settings']['_element_id'], $el['settings']['_cssid']);
+        foreach ($el['settings'] as &$val) {
+            if (is_array($val) && $val && array_keys($val) === range(0, count($val) - 1)) {
+                foreach ($val as &$row) {
+                    if (is_array($row) && isset($row['_id'])) {
+                        $row['_id'] = bulkseme_elementor_new_id($ids);
+                    }
+                }
+                unset($row);
+            }
+        }
+        unset($val);
+    }
+    if (!empty($el['elements']) && is_array($el['elements'])) {
+        foreach ($el['elements'] as &$child) {
+            if (is_array($child)) {
+                $map += bulkseme_elementor_reid($child, $ids);
+            }
+        }
+        unset($child);
+    }
+    return $map;
+}
+
+/**
+ * Whether this request may store raw HTML (bulkseme_content_raw_html_allowed with the request's own
+ * unsafe_html flag). Set once by the POST /content handler; false for anything else.
+ */
+function bulkseme_elementor_request_raw($set = null) {
+    static $raw = false;
+    if ($set !== null) {
+        $raw = (bool) $set;
+    }
+    return $raw;
+}
+
+/** Point `classes` props at renamed local style ids, at any depth. */
+function bulkseme_elementor_rekey_classes(array &$v, array $smap) {
+    if (isset($v['$$type']) && $v['$$type'] === 'classes' && isset($v['value']) && is_array($v['value'])) {
+        foreach ($v['value'] as $i => $cls) {
+            if (is_string($cls) && isset($smap[$cls])) {
+                $v['value'][$i] = $smap[$cls];
+            }
+        }
+        return;
+    }
+    foreach ($v as &$x) {
+        if (is_array($x)) {
+            bulkseme_elementor_rekey_classes($x, $smap);
+        }
+    }
+    unset($x);
+}
+
+/**
+ * For a caller without raw HTML: an Elementor 4 atomic element's settings must pass Elementor's
+ * own props schema, the check its editor save runs (an enum `tag` cannot hold spaces and so cannot
+ * carry attributes). Returns '' when fine or when the element is not atomic, else a reason.
+ */
+function bulkseme_elementor_atomic_schema_reason(array $el) {
+    $s = isset($el['settings']) && is_array($el['settings']) ? $el['settings'] : [];
+    // Without Elementor's parser, any `tag` string still has to be a bare tag name.
+    $tag_ok = function ($v) use (&$tag_ok) {
+        foreach ($v as $k => $x) {
+            if ($k === 'tag') {
+                $t = is_array($x) && isset($x['value']) ? $x['value'] : $x;
+                $allowed = class_exists('\Elementor\Utils') && defined('\Elementor\Utils::ALLOWED_HTML_WRAPPER_TAGS')
+                    ? (array) \Elementor\Utils::ALLOWED_HTML_WRAPPER_TAGS
+                    : ['a', 'article', 'aside', 'button', 'div', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'main', 'nav', 'p', 'section', 'span'];
+                if (!is_string($t) || !in_array(strtolower($t), array_map('strval', $allowed), true)) {
+                    return false;
+                }
+            } elseif (is_array($x) && !$tag_ok($x)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!$tag_ok($s)) {
+        return 'atomic_tag_not_a_tag_name';
+    }
+    $is_atomic = false;
+    foreach ($s as $x) {
+        if (is_array($x) && isset($x['$$type'])) {
+            $is_atomic = true;
+            break;
+        }
+    }
+    $et = isset($el['elType']) ? (string) $el['elType'] : '';
+    if (strpos($et, 'e-') === 0 || (isset($el['widgetType']) && is_string($el['widgetType']) && strpos($el['widgetType'], 'e-') === 0)) {
+        $is_atomic = true;
+    }
+    if (!$is_atomic) {
+        return '';
+    }
+    if (!class_exists('\Elementor\Modules\AtomicWidgets\Parsers\Props_Parser')) {
+        return 'atomic_element_needs_elementor_parser';
+    }
+    try {
+        $inst = ($et === 'widget')
+            ? \Elementor\Plugin::$instance->widgets_manager->get_widget_types((string) $el['widgetType'])
+            : \Elementor\Plugin::$instance->elements_manager->get_element_types($et);
+        if (!is_object($inst) || !method_exists($inst, 'get_props_schema')) {
+            return 'atomic_element_type_unknown';
+        }
+        $method = new \ReflectionMethod($inst, 'get_props_schema');
+        if (!$method->isStatic() || !$method->isPublic()) {
+            return 'atomic_element_type_unknown';
+        }
+        $schema = $method->invoke(null);
+        $res    = \Elementor\Modules\AtomicWidgets\Parsers\Props_Parser::make(is_array($schema) ? $schema : [])->parse($s);
+        if (!$res->is_valid()) {
+            return 'atomic_settings_fail_elementor_schema';
+        }
+    } catch (\Throwable $e) {
+        return 'atomic_settings_fail_elementor_schema';
+    }
+    return '';
+}
+
+/** True when a registered widget type has a CODE control (raw markup or script it prints as-is). */
+function bulkseme_elementor_widget_has_code_control($widget_type) {
+    static $cache = [];
+    if (array_key_exists($widget_type, $cache)) {
+        return $cache[$widget_type];
+    }
+    $has = false;
+    try {
+        $widget = \Elementor\Plugin::$instance->widgets_manager->get_widget_types($widget_type);
+        if ($widget && method_exists($widget, 'get_controls')) {
+            foreach ((array) $widget->get_controls() as $cname => $ctl) {
+                // Elementor Pro adds a Custom CSS code control to every widget; element Custom CSS is
+                // handled on its own (custom_css checks and bulkseme_elementor_apply_custom_css).
+                if ($cname === 'custom_css') {
+                    continue;
+                }
+                if (is_array($ctl) && isset($ctl['type']) && $ctl['type'] === 'code') {
+                    $has = true;
+                    break;
+                }
+                if (is_array($ctl) && isset($ctl['type'], $ctl['fields']) && $ctl['type'] === 'repeater' && is_array($ctl['fields'])) {
+                    foreach ($ctl['fields'] as $f) {
+                        if (is_array($f) && isset($f['type']) && $f['type'] === 'code') {
+                            $has = true;
+                            break 2;
+                        }
+                    }
+                }
+            }
+        } else {
+            $has = true; // unknown widget type: cannot vouch for it
+        }
+    } catch (\Throwable $e) {
+        $has = true;
+    }
+    $cache[$widget_type] = $has;
+    return $has;
+}
+
+/**
+ * Why a caller WITHOUT unfiltered_html may not copy this element, or '' when it
+ * may. A copy moves stored settings verbatim, so anything such a caller could
+ * not write through /content itself is refused rather than laundered: markup
+ * and code widgets (by name, any wp-widget-*, and any widget with a CODE
+ * control), Custom CSS, custom attributes at any depth, and dynamic tags (a
+ * dynamic tag can run a shortcode or print raw field values).
+ */
+function bulkseme_elementor_copy_block_reason(array $el) {
+    $code = (array) apply_filters('bulkseme_elementor_code_widgets', ['html', 'code-highlight', 'shortcode', 'template', 'global']);
+    $wt   = isset($el['widgetType']) && is_string($el['widgetType']) ? $el['widgetType'] : '';
+    if ($wt !== '' && (in_array($wt, $code, true) || strpos($wt, 'wp-widget-') === 0 || bulkseme_elementor_widget_has_code_control($wt))) {
+        return 'widget_type_requires_unfiltered_html:' . $wt;
+    }
+    $atomic = bulkseme_elementor_atomic_schema_reason($el);
+    if ($atomic !== '') {
+        return $atomic;
+    }
+    $s = isset($el['settings']) && is_array($el['settings']) ? $el['settings'] : [];
+    if (isset($s['custom_css']) && trim((string) (is_scalar($s['custom_css']) ? $s['custom_css'] : 'x')) !== '') {
+        return 'custom_css_requires_unfiltered_html';
+    }
+    $walk = function ($v) use (&$walk) {
+        if (!is_array($v)) {
+            return '';
+        }
+        if (!empty($v['__dynamic__'])) {
+            return 'dynamic_tags_require_unfiltered_html';
+        }
+        // An SVG loaded by URL is fetched by the server on render (remote or ../ paths): media library only.
+        if (isset($v['$$type'], $v['value']['url']) && $v['$$type'] === 'svg-src' && $v['value']['url'] !== '') {
+            return 'svg_by_url_requires_unfiltered_html';
+        }
+        // Elementor 4 atomic props: a dynamic tag is {"$$type":"dynamic"}, custom attributes are an
+        // `attributes` prop the element prints raw. Only plain value types may be copied.
+        if (isset($v['$$type'])) {
+            $t    = is_string($v['$$type']) ? $v['$$type'] : '';
+            $safe = (array) apply_filters('bulkseme_elementor_copy_safe_prop_types', ['string', 'html', 'html-v3', 'number', 'boolean', 'classes', 'image', 'image-src', 'image-attachment-id', 'svg-src', 'url', 'link', 'query', 'size', 'color', 'dimensions']);
+            if ($t === 'dynamic' || $t === 'attributes' || $t === 'overridable' || !in_array($t, $safe, true)) {
+                return 'atomic_prop_requires_unfiltered_html:' . ($t !== '' ? $t : 'unknown');
+            }
+        }
+        foreach ($v as $k => $x) {
+            if (is_string($k) && in_array($k, ['_attributes', 'custom_attributes', '_element_custom_attributes', 'attributes'], true) && !empty($x)) {
+                return 'custom_attributes_require_unfiltered_html';
+            }
+            if (is_array($x)) {
+                $r = $walk($x);
+                if ($r !== '') {
+                    return $r;
+                }
+            }
+        }
+        return '';
+    };
+    $r = $walk($s);
+    if ($r !== '') {
+        return $r;
+    }
+    if (!empty($el['elements']) && is_array($el['elements'])) {
+        foreach ($el['elements'] as $c) {
+            if (is_array($c)) {
+                $r = bulkseme_elementor_copy_block_reason($c);
+                if ($r !== '') {
+                    return $r;
+                }
+            }
+        }
+    }
+    return '';
+}
+
+/** Keep only the classic element keys (drops atomic styles, interactions and anything unknown), for restricted copies. */
+function bulkseme_elementor_allowlist_keys(array $el) {
+    // Atomic local styles are left out: they can carry dynamic tags and free-form values a restricted
+    // copy cannot vouch for. Classic style-tab values are kept as stored (markup is refused by the
+    // inert check), which is no more than Elementor's own editor lets the same user write.
+    $out = array_intersect_key($el, array_flip(['id', 'elType', 'widgetType', 'isInner', 'settings', 'elements']));
+    if (!empty($out['elements']) && is_array($out['elements'])) {
+        foreach ($out['elements'] as $i => $c) {
+            $out['elements'][$i] = is_array($c) ? bulkseme_elementor_allowlist_keys($c) : $c;
+        }
+    }
+    return $out;
+}
+
+/** Number of elements in a subtree (the element itself included). */
+function bulkseme_elementor_count_nodes(array $el) {
+    $n = 1;
+    if (!empty($el['elements']) && is_array($el['elements'])) {
+        foreach ($el['elements'] as $c) {
+            if (is_array($c)) {
+                $n += bulkseme_elementor_count_nodes($c);
+            }
+        }
+    }
+    return $n;
+}
+
+/** Deepest element nesting in a tree (1 = top level only). */
+function bulkseme_elementor_depth(array $elements, $d = 1) {
+    $max = $elements ? $d : $d - 1;
+    if ($d > 64) {
+        return $d; // stop walking: already far past any sane layout
+    }
+    foreach ($elements as $el) {
+        if (is_array($el) && !empty($el['elements']) && is_array($el['elements'])) {
+            $max = max($max, bulkseme_elementor_depth($el['elements'], $d + 1));
+        }
+    }
+    return $max;
+}
+
+/**
+ * Whether Elementor accepts $child (elType) directly inside $parent (elType,
+ * '' = top level). Mirrors the editor: sections hold columns, columns hold
+ * widgets and inner sections, containers hold widgets and containers.
+ */
+function bulkseme_elementor_child_allowed($parent, array $child) {
+    $c = isset($child['elType']) ? (string) $child['elType'] : '';
+    // Atomic tabs keep a fixed structure (menu, tab, content) the editor builds itself.
+    if (strpos($c, 'e-tab') === 0 || strpos((string) $parent, 'e-tab') === 0) {
+        return false;
+    }
+    switch ($parent) {
+        case '':
+            return $c === 'section' || $c === 'container' || $c === 'e-div-block' || $c === 'e-flexbox';
+        case 'section':
+            return $c === 'column';
+        case 'column':
+            return $c === 'widget' || $c === 'section' || $c === 'container';
+        case 'widget':
+            // Nested widgets (tabs, accordion, carousel, menu) keep their panes as child containers.
+            return $c === 'container';
+        default: // container and Elementor 4 atomic layout elements
+            return $c === 'widget' || $c === 'container' || $c === 'e-div-block' || $c === 'e-flexbox';
+    }
+}
+
+/** True when every parent/child pair inside $node is one Elementor accepts (no section below an inner section). */
+function bulkseme_elementor_subtree_ok(array $node, $in_inner, $parent_type = '') {
+    $type  = isset($node['elType']) ? (string) $node['elType'] : '';
+    // A section inside a column is inner whatever its stored flag says.
+    $inner = $in_inner || ($type === 'section' && (!empty($node['isInner']) || $parent_type === 'column'));
+    foreach ((isset($node['elements']) && is_array($node['elements'])) ? $node['elements'] : [] as $child) {
+        if (!is_array($child) || !bulkseme_elementor_child_allowed($type, $child)) {
+            return false;
+        }
+        if (isset($child['elType']) && $child['elType'] === 'section' && $in_inner) {
+            return false;
+        }
+        if (isset($child['elType']) && $child['elType'] === 'section' && $type === 'column' && $inner) {
+            return false;
+        }
+        if (!bulkseme_elementor_subtree_ok($child, $inner, $type)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** isInner as Elementor's editor sets it: a section is inner inside a column, a container inside any parent. */
+function bulkseme_elementor_set_inner(array &$new, $parent_type) {
+    $t = isset($new['elType']) ? (string) $new['elType'] : '';
+    if ($t === 'section') {
+        $new['isInner'] = ($parent_type === 'column');
+    } elseif ($t === 'container' || $t === 'e-div-block' || $t === 'e-flexbox') {
+        $new['isInner'] = ($parent_type !== '');
+    }
+    // The whole copy, not only its top: a stale flag deeper down would mislead the next placement.
+    if (!empty($new['elements']) && is_array($new['elements'])) {
+        foreach ($new['elements'] as &$child) {
+            if (is_array($child)) {
+                bulkseme_elementor_set_inner($child, $t);
+            }
+        }
+        unset($child);
+    }
+}
+
+/**
+ * Splice $new before/after $ref, or first/last inside it. Returns true when
+ * placed, false when $ref is missing, or an error string: 'widget_ref' when
+ * first/last targets a widget, 'not_allowed_here' when Elementor would not
+ * accept that element type in that parent. A section placed inside a column
+ * becomes an inner section.
+ */
+function bulkseme_elementor_place(array &$elements, $ref, $position, array $new, $parent_type = '', $in_inner = false) {
+    $elements = array_values($elements); // splice offsets are positions, never stored keys
+    foreach ($elements as $i => &$el) {
+        if (!is_array($el)) {
+            continue;
+        }
+        if (isset($el['id']) && (string) $el['id'] === $ref) {
+            if ($position === 'before' || $position === 'after') {
+                unset($el);
+                if ($parent_type === 'widget') {
+                    return 'not_allowed_here'; // a nested widget's panes are managed by the widget itself
+                }
+                bulkseme_elementor_set_inner($new, $parent_type);
+                if (!bulkseme_elementor_child_allowed($parent_type, $new) || ($in_inner && isset($new['elType']) && $new['elType'] === 'section')
+                    || !bulkseme_elementor_subtree_ok($new, $in_inner || ($parent_type === 'column' && isset($new['elType']) && $new['elType'] === 'section'))) {
+                    return 'not_allowed_here';
+                }
+                array_splice($elements, $position === 'before' ? $i : $i + 1, 0, [$new]);
+                return true;
+            }
+            $here = isset($el['elType']) ? (string) $el['elType'] : '';
+            if ($here === 'widget') {
+                unset($el);
+                return 'widget_ref';
+            }
+            $here_inner = $in_inner || ($here === 'section' && (!empty($el['isInner']) || $parent_type === 'column'));
+            bulkseme_elementor_set_inner($new, $here);
+            if (!bulkseme_elementor_child_allowed($here, $new) || ($here_inner && isset($new['elType']) && $new['elType'] === 'section')
+                || !bulkseme_elementor_subtree_ok($new, $here_inner || ($here === 'column' && isset($new['elType']) && $new['elType'] === 'section'))) {
+                unset($el);
+                return 'not_allowed_here';
+            }
+            if (!isset($el['elements']) || !is_array($el['elements'])) {
+                $el['elements'] = [];
+            }
+            if ($position === 'first') {
+                array_unshift($el['elements'], $new);
+            } else {
+                $el['elements'][] = $new;
+            }
+            unset($el);
+            return true;
+        }
+        if (!empty($el['elements']) && is_array($el['elements'])) {
+            $et = isset($el['elType']) ? (string) $el['elType'] : 'container';
+            $r  = bulkseme_elementor_place($el['elements'], $ref, $position, $new, $et, $in_inner || ($et === 'section' && (!empty($el['isInner']) || $parent_type === 'column')));
+            if ($r !== false) {
+                unset($el);
+                return $r;
+            }
+        }
+    }
+    unset($el);
+    return false;
+}
+
+/**
+ * Clean a copied element for a caller without unfiltered_html, in place: every
+ * text setting the plugin maps (and atomic text props) goes through the same
+ * filter a direct write would. Any other string setting that holds markup or a
+ * script URL makes the copy fail (false): where such a value is printed is not
+ * known, so it is refused rather than guessed at.
+ */
+function bulkseme_elementor_clean_copy(array &$el) {
+    if (isset($el['settings']) && is_array($el['settings'])) {
+        $map = (isset($el['elType'], $el['widgetType']) && $el['elType'] === 'widget' && is_string($el['widgetType']))
+            ? bulkseme_elementor_editable_settings($el['widgetType']) : [];
+        foreach ($el['settings'] as $key => &$val) {
+            if ($key === '_title' && is_string($val)) {
+                // Navigator label, shown only in the editor: plain text, quotes allowed.
+                $val = sanitize_text_field($val);
+                continue;
+            }
+            if (isset($map[$key]) && !is_array($map[$key]) && is_string($val)) {
+                $val = bulkseme_content_sanitize($val, $map[$key]);
+                continue;
+            }
+            if (isset($map[$key]['repeater']) && is_array($val)) {
+                foreach ($val as &$row) {
+                    if (!is_array($row)) {
+                        continue;
+                    }
+                    foreach ($row as $fname => &$fval) {
+                        if (isset($map[$key]['repeater'][$fname]) && is_string($fval)) {
+                            $fval = bulkseme_content_sanitize($fval, $map[$key]['repeater'][$fname]);
+                        } elseif (!bulkseme_elementor_value_is_inert($fval)) {
+                            unset($fval, $row, $val);
+                            return false;
+                        }
+                    }
+                    unset($fval);
+                }
+                unset($row);
+                continue;
+            }
+            if (is_array($val) && isset($val['$$type'])) {
+                $txt = bulkseme_elementor_atomic_text_get($val);
+                if ($txt !== null) {
+                    bulkseme_elementor_atomic_text_set($val, bulkseme_content_sanitize($txt, 'wysiwyg'));
+                    continue;
+                }
+            }
+            if (!bulkseme_elementor_value_is_inert($val)) {
+                unset($val);
+                return false;
+            }
+        }
+        unset($val);
+    }
+    if (!empty($el['elements']) && is_array($el['elements'])) {
+        foreach ($el['elements'] as &$child) {
+            if (is_array($child) && !bulkseme_elementor_clean_copy($child)) {
+                unset($child);
+                return false;
+            }
+        }
+        unset($child);
+    }
+    return true;
+}
+
+/** True when a stored value (at any depth) holds no markup and no script-scheme URL. */
+function bulkseme_elementor_value_is_inert($v) {
+    if (is_array($v)) {
+        foreach ($v as $x) {
+            if (!bulkseme_elementor_value_is_inert($x)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (!is_string($v)) {
+        return true;
+    }
+    if (strpos($v, '<') !== false || strpos($v, '>') !== false) {
+        return false;
+    }
+    // Decode entities first (javascript&#58; ...), twice for double-encoded input, then drop whitespace and controls.
+    $d = html_entity_decode(html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    if (strpos($d, '<') !== false || strpos($d, '>') !== false || strpos($d, '"') !== false || strpos($d, "'") !== false || strpos($d, '`') !== false) {
+        return false;
+    }
+    // Browsers also decode numeric references without the closing semicolon (&#106avascript:), at any decode stage.
+    $once = html_entity_decode($v, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    foreach ([$v, $once, $d] as $stage) {
+        if (preg_match('/&#x?[0-9a-f]+(?![0-9a-f;])/i', $stage)) {
+            return false;
+        }
+    }
+    return !preg_match('/(?:java|vb)script:|data:text\/html/i', (string) preg_replace('/[\x00-\x20\x7f]+/', '', $d));
+}
+
+/** Apply inserts[] to a tree. Returns [results[], changed_count]. */
+function bulkseme_content_apply_inserts(array &$tree, array $inserts, $post_id, $verbatim = false) {
+    $results = [];
+    $changed = 0;
+    $ids     = [];
+    bulkseme_elementor_collect_ids($tree, $ids);
+    $sources     = [];
+    $total_nodes = 0;
+    $total_bytes = 0;
+    foreach ($inserts as $n => $ins) {
+        $ins  = is_array($ins) ? $ins : [];
+        $ref  = isset($ins['ref']) && is_scalar($ins['ref']) ? (string) $ins['ref'] : '';
+        $pos  = isset($ins['position']) && is_scalar($ins['position']) ? (string) $ins['position'] : 'after';
+        $from = isset($ins['copy_from']) && is_array($ins['copy_from']) ? $ins['copy_from'] : [];
+        $src_el  = isset($from['el']) && is_scalar($from['el']) ? (string) $from['el'] : '';
+        $src_pid = isset($from['post_id']) && is_scalar($from['post_id']) ? absint($from['post_id']) : (int) $post_id;
+        $base = ['insert' => $n, 'ref' => $ref, 'position' => $pos, 'copy_from' => ['post_id' => $src_pid, 'el' => $src_el]];
+        if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $ref) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $src_el)) {
+            $results[] = $base + ['status' => 'invalid_value', 'errors' => ['missing_or_invalid_ref_or_el']];
+            continue;
+        }
+        if (!in_array($pos, ['before', 'after', 'first', 'last'], true)) {
+            $results[] = $base + ['status' => 'invalid_value', 'errors' => ['position_must_be_before_after_first_last']];
+            continue;
+        }
+        if ($src_pid === (int) $post_id) {
+            $src_tree = $tree;
+        } else {
+            if (!isset($sources[$src_pid]) && count($sources) >= 5) {
+                $results[] = $base + ['status' => 'invalid_value', 'errors' => ['too_many_source_posts'], 'hint' => 'max 5 different copy_from posts per request'];
+                continue;
+            }
+            if (!isset($sources[$src_pid])) {
+                // Same checks as editing the source itself: edit_post, the builder gate and
+                // Elementor's own document permission. The source must be an Elementor post.
+                $sdet = null;
+                $sp   = bulkseme_content_load_post($src_pid, $sdet);
+                if (!is_wp_error($sp) && (!is_array($sdet) || $sdet['builder'] !== 'elementor')) {
+                    $sp = new WP_Error('source_not_elementor', 'copy_from post is not an Elementor post');
+                }
+                if (is_wp_error($sp)) {
+                    $sources[$src_pid] = $sp;
+                } else {
+                    $sraw = get_post_meta($src_pid, '_elementor_data', true);
+                    $max  = (int) apply_filters('bulkseme_elementor_max_source_bytes', 2097152);
+                    $sdec = is_string($sraw) && $sraw !== '' && strlen($sraw) <= $max ? json_decode($sraw, true) : null;
+                    $sources[$src_pid] = is_array($sdec) ? $sdec : new WP_Error('no_elementor_data', 'source has no usable _elementor_data');
+                }
+            }
+            if (is_wp_error($sources[$src_pid])) {
+                // One answer for every reason (missing, not editable, not Elementor, no data), so the
+                // response says nothing about a post the caller may not edit.
+                $results[] = $base + ['status' => 'source_not_found', 'errors' => ['source_not_available']];
+                continue;
+            }
+            $src_tree = $sources[$src_pid];
+        }
+        $node = bulkseme_elementor_find_node($src_tree, $src_el);
+        if ($node === null) {
+            $results[] = $base + ['status' => 'element_not_found', 'errors' => ['copy_from_el_not_found']];
+            continue;
+        }
+        if (isset($node['widgetType']) && $node['widgetType'] === 'global') {
+            $results[] = $base + ['status' => 'setting_not_editable', 'errors' => ['global_widget_not_copyable']];
+            continue;
+        }
+        $sanitized = false;
+        $original  = wp_json_encode($node);
+        $nodes_in  = bulkseme_elementor_count_nodes($node);
+        $bytes_in = strlen((string) wp_json_encode($node));
+        if ($nodes_in > 200 || $bytes_in > 262144 || $total_nodes + $nodes_in > 500 || $total_bytes + $bytes_in > 1048576) {
+            $results[] = $base + ['status' => 'invalid_value', 'errors' => ['copy_too_large'], 'hint' => 'max 200 elements / 256 KB per copy, 500 elements / 1 MB per request'];
+            continue;
+        }
+        // Verbatim only where raw HTML is allowed for this request (site switch, capability and
+        // unsafe_html=1, see bulkseme_content_raw_html_allowed); every other copy is restricted.
+        if (!$verbatim) {
+            if (!bulkseme_elementor_active()) {
+                $results[] = $base + ['status' => 'setting_not_editable', 'errors' => ['copy_requires_elementor_active_or_unfiltered_html']];
+                continue;
+            }
+            $node = bulkseme_elementor_allowlist_keys($node);
+            $why  = bulkseme_elementor_copy_block_reason($node);
+            $need = 'a verbatim copy needs the bulkseme_allow_unfiltered_html site filter, the unfiltered_html capability and unsafe_html=1';
+            if ($why !== '') {
+                $results[] = $base + ['status' => 'setting_not_editable', 'errors' => [$why], 'hint' => $need];
+                continue;
+            }
+            if (!bulkseme_elementor_clean_copy($node)) {
+                $results[] = $base + ['status' => 'setting_not_editable', 'errors' => ['markup_in_unmapped_setting_requires_unfiltered_html'], 'hint' => $need];
+                continue;
+            }
+            // Anything the restricted path dropped or cleaned (keys, styles, text) counts.
+            $sanitized = (wp_json_encode($node) !== $original);
+        }
+        $ids_before = $ids;
+        $idmap = bulkseme_elementor_reid($node, $ids);
+        $placed = bulkseme_elementor_place($tree, $ref, $pos, $node);
+        if ($placed !== true) {
+            $ids = $ids_before;
+            $err = $placed === 'not_allowed_here' ? 'element_type_not_allowed_in_that_parent' : ($placed === 'widget_ref' ? 'ref_is_a_widget_use_before_or_after' : 'ref_not_found');
+            $results[] = $base + ['status' => $placed === false ? 'element_not_found' : 'invalid_value', 'errors' => [$err]];
+            continue;
+        }
+        $total_nodes += $nodes_in;
+        $total_bytes += $bytes_in;
+        $changed++;
+        $results[] = $base + [
+            'status' => 'ok', 'new_el' => $node['id'], 'sanitized' => $sanitized, 'created' => bulkseme_elementor_ids_of($node),
+            'widget' => isset($node['widgetType']) ? $node['widgetType'] : (isset($node['elType']) ? $node['elType'] : ''),
+            'id_map' => $idmap,
+        ];
+    }
+    return [$results, $changed];
+}
+
 /**
  * URL for a link control. Empty clears the link. Relative paths, fragments,
  * mailto: and tel: survive esc_url_raw; anything it rejects is refused (null).
@@ -649,6 +1476,35 @@ function bulkseme_elementor_flatten(array $elements, $parent_path = '') {
                     }
                 }
             }
+            // Choice settings (2.2.0): selects, switchers and choose controls, with their option keys.
+            foreach (bulkseme_elementor_choice_settings($wt) as $key => $spec) {
+                if (isset($spec['choice'])) {
+                    $stored = isset($settings[$key]) && is_scalar($settings[$key]) ? (string) $settings[$key] : null;
+                    $nodes[] = [
+                        'el' => $el_id, 'widget' => $wt, 'setting' => $key, 'kind' => 'choice',
+                        'text' => $stored !== null ? $stored : $spec['default'], 'default' => $stored === null,
+                        'options' => $spec['choice'], 'html' => false, 'dynamic' => isset($dyn[$key]), 'editable' => true, 'path' => $path,
+                    ];
+                } elseif (isset($spec['repeater'])) {
+                    $rows = isset($settings[$key]) && is_array($settings[$key]) ? $settings[$key] : [];
+                    foreach ($rows as $idx => $row) {
+                        if (!is_array($row)) {
+                            continue;
+                        }
+                        $row_id = isset($row['_id']) ? (string) $row['_id'] : '';
+                        foreach ($spec['repeater'] as $fname => $fspec) {
+                            $stored = isset($row[$fname]) && is_scalar($row[$fname]) ? (string) $row[$fname] : null;
+                            $nodes[] = [
+                                'el' => $el_id, 'widget' => $wt, 'kind' => 'choice',
+                                'setting' => ($row_id !== '' ? $key . '[' . $row_id . '].' : $key . '.' . $idx . '.') . $fname,
+                                'text' => $stored !== null ? $stored : $fspec['default'], 'default' => $stored === null,
+                                'options' => $fspec['choice'], 'html' => false, 'dynamic' => isset($row['__dynamic__'][$fname]),
+                                'editable' => true, 'item_index' => $idx, 'path' => $path,
+                            ];
+                        }
+                    }
+                }
+            }
             // Elementor 4 atomic props and component overrides (no classic controls).
             $nodes = array_merge($nodes, bulkseme_elementor_atomic_nodes($el_id, $wt, $settings, $path, $map));
         }
@@ -850,6 +1706,52 @@ function bulkseme_elementor_apply_to_node(&$node, $parsed, $value, $force) {
     }
     if (isset($parsed['key']) && isset($lmap[$parsed['key']]) && is_array($lmap[$parsed['key']]) && isset($lmap[$parsed['key']]['tag'])) {
         return bulkseme_elementor_apply_tag($settings, $parsed['key'], $lmap[$parsed['key']], $value);
+    }
+
+    // Choice settings (2.2.0): value must be one of the control's option keys.
+    $cmap = bulkseme_elementor_choice_settings($wt);
+    if (isset($parsed['sub'])) {
+        $cmap = []; // "<x>.url" never addresses a choice control
+    }
+    $choice_field = isset($parsed['key']) ? $parsed['key'] : (isset($parsed['field']) ? $parsed['field'] : '');
+    if (!bulkseme_elementor_request_raw() && (isset($cmap[$choice_field]) || (isset($parsed['repeater']) && isset($cmap[$parsed['repeater']]['repeater'][$choice_field])))
+        && (preg_match('/html|code|script|embed|iframe|template|shortcode/i', (string) $choice_field) || bulkseme_elementor_widget_has_code_control($wt))) {
+        return ['status' => 'setting_not_editable', 'errors' => ['raw_render_choice_requires_unfiltered_html']];
+    }
+    if (!bulkseme_elementor_request_raw() && in_array(strtolower((string) $value), (array) apply_filters('bulkseme_choice_raw_values', ['html', 'code', 'custom_html', 'raw', 'shortcode']), true)
+        && ((isset($parsed['key']) && isset($cmap[$parsed['key']])) || (isset($parsed['repeater']) && isset($cmap[$parsed['repeater']]['repeater'][$parsed['field']])))) {
+        return ['status' => 'setting_not_editable', 'errors' => ['raw_render_choice_requires_unfiltered_html']];
+    }
+    if (isset($parsed['key']) && isset($cmap[$parsed['key']]['choice'])) {
+        if (!$force && isset($settings['__dynamic__'][$parsed['key']])) {
+            return ['status' => 'dynamic_skipped', 'hint' => 'This setting is overridden by a dynamic tag. Pass force=1 to write it anyway.'];
+        }
+        return bulkseme_elementor_apply_choice($settings, $parsed['key'], $cmap[$parsed['key']], $value);
+    }
+    if (isset($parsed['repeater']) && isset($cmap[$parsed['repeater']]['repeater'][$parsed['field']])) {
+        $rep = $parsed['repeater'];
+        if (!isset($settings[$rep]) || !is_array($settings[$rep])) {
+            return ['status' => 'row_not_found', 'errors' => ['repeater_empty:' . $rep]];
+        }
+        $crows = &$settings[$rep];
+        $hit   = null;
+        if (isset($parsed['row_id'])) {
+            foreach ($crows as $i => $row) {
+                if (is_array($row) && isset($row['_id']) && (string) $row['_id'] === $parsed['row_id']) {
+                    $hit = $i;
+                    break;
+                }
+            }
+        } elseif (isset($crows[$parsed['index']]) && is_array($crows[$parsed['index']])) {
+            $hit = $parsed['index'];
+        }
+        if ($hit === null) {
+            return ['status' => 'row_not_found', 'errors' => ['row_not_found:' . $rep]];
+        }
+        if (!$force && isset($crows[$hit]['__dynamic__'][$parsed['field']])) {
+            return ['status' => 'dynamic_skipped', 'hint' => 'This repeater field is overridden by a dynamic tag. Pass force=1 to write it anyway.'];
+        }
+        return bulkseme_elementor_apply_choice($crows[$hit], $parsed['field'], $cmap[$rep]['repeater'][$parsed['field']], $value);
     }
 
     if (isset($parsed['key'])) {

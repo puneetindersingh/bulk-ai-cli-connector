@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.1.0
+Stable tag: 2.2.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -71,7 +71,7 @@ Version 2.0 goes past SEO fields. The same REST API can now read and change the 
 * **Post titles** (v1.9.0+): send `post_title` in a `/bulk` item to rename a post; the slug is never touched
 * **Sitemap refresh** (v1.9.0+): `POST /sitemap/flush` clears the Yoast or Rank Math sitemap cache after REST edits
 * **Invalid Product schema guard** (v1.9.0+): drops `Product` nodes that carry no `offers`, `review` or `aggregateRating`, the ones Search Console reports as invalid on quote-only WooCommerce catalogues. Disable with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false')`
-* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write. From v2.1.0: add rows to ACF repeaters and flexible content, and edit ACF fields on terms
+* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write. From v2.1.0: add rows to ACF repeaters and flexible content, and edit ACF fields on terms. From v2.2.0: Elementor dropdowns and switches, and adding a widget by copying an existing one
 * **Redirects, page copies and merchant listing fields** (v2.0.0+): see "New in 2.0" above
 * **API keys** (v2.0.0+): a second way to sign in, next to application passwords
 
@@ -271,6 +271,12 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.2.0 =
+* New: Elementor choice settings in `/content`. Dropdown, choose and switch controls on a widget's Content tab, including the fields of repeater rows (for example a Post Info row's `type`, `taxonomy` and `link`), are listed with `kind: choice` and their `options`. A write is accepted only when the value is one of those options. Heading levels stay `kind: tag`. Needs Elementor running, because the options come from its registered controls.
+* New: add an Elementor element by copying an existing one. `POST /content {"inserts": [{"ref": "<element id>", "position": "after", "copy_from": {"post_id": 123, "el": "<element id>"}}]}` clones an element from the same page or another Elementor page you can edit, with new element and row ids and without its CSS ID, before, after or inside `ref`. Elements only go where Elementor accepts them (a section placed in a column becomes an inner section). Up to 20 per request, applied before `updates[]`, with the usual dry run, base_hash, backup and revert. New `atomic=1` writes nothing when any update or insert in the request fails.
+* Security: the copy source passes the same checks as editing it (edit rights, the builder gate and Elementor's own permission). Unless the site allows raw HTML (the `bulkseme_allow_unfiltered_html` filter) and the request sends `unsafe_html=1`, a copy, including an administrator's, keeps only the standard element keys (no local styles), its text is cleaned like a direct write (the result says `sanitized: true` when anything was cleaned or left out), and they cannot copy HTML, shortcode, template, code or WordPress widgets, any widget with a code control, Custom CSS, custom attributes, dynamic tags, or any other setting that holds markup or a script link; nor set a choice to a raw output value. Size limits per copy, per request and per page (8 MB, 24 levels) stop runaway growth.
+* `/status` reports `supports_choice_settings` and `supports_inserts`.
+
 = 2.1.0 =
 * New: add a row to an Advanced Custom Fields repeater or flexible content field. Send an update `{"op": "add_row", "el": "<field>", "position": 2, "layout": "<layout>", "values": {"<sub field>": "text"}}` in `POST /content`. `GET /content` lists every repeater and flexible content field under `containers`, with its row count and the sub fields a new row may fill. The rows below the insert move down with every value they hold, images and nested rows included. Text is cleaned like any other write, the field's maximum row count holds, and a stored value that belongs to another field, or that names a PHP class, stops the insert before anything is written. The backup holds the whole field, so `/content/revert` puts the rows back exactly.
 * New: Advanced Custom Fields on taxonomy terms. With `kind=term`, `GET /content` lists the term's ACF text fields and rows under `acf`, and `POST /content` with `updates[]` edits them and adds rows, with the same backup and revert as on posts. The term description is left alone.
@@ -430,6 +436,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.2.0 =
+Adds Elementor dropdown and switch settings and inserting an element by copy, both checked against Elementor's own permissions and capped for accounts without unfiltered_html.
 
 = 2.1.0 =
 Adds rows to ACF repeaters and flexible content, and ACF fields on terms. If you filter `bulkseme_user_can_edit_with_builder` to keep a role out of ACF, add the same rule to the new `bulkseme_user_can_edit_term_acf`.

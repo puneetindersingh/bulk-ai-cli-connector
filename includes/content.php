@@ -484,11 +484,17 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
 
     if ($det['builder'] === 'elementor') {
         $updates = $req->get_param('updates');
-        if (!is_array($updates) || !$updates) {
-            return new WP_Error('invalid_payload', 'elementor pages are edited via a non-empty updates[] array (post_content is derived output)', ['status' => 400]);
+        $inserts = $req->get_param('inserts');
+        $updates = is_array($updates) ? $updates : [];
+        $inserts = is_array($inserts) ? $inserts : [];
+        if (!$updates && !$inserts) {
+            return new WP_Error('invalid_payload', 'elementor pages are edited via a non-empty updates[] and/or inserts[] array (post_content is derived output)', ['status' => 400]);
         }
         if (count($updates) > 100) {
             return new WP_Error('too_many', 'max 100 updates per request', ['status' => 400]);
+        }
+        if (count($inserts) > 20) {
+            return new WP_Error('too_many', 'max 20 inserts per request', ['status' => 400]);
         }
         if (!$det['active'] && !$force) {
             return new WP_Error('elementor_inactive', 'Elementor is not active on this site; pass force=1 to patch _elementor_data anyway (post_content will not re-sync and only core widgets are recognized)', ['status' => 409]);
@@ -509,8 +515,50 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
         if (!is_array($tree)) {
             return new WP_Error('invalid_elementor_data', '_elementor_data is not valid JSON', ['status' => 500]);
         }
-        list($results, $changed) = bulkseme_content_apply_updates($tree, $updates, $force);
-        return bulkseme_content_commit_elementor($id, $raw, $tree, $results, $changed, $dry_run);
+        // Inserts first (2.2.0), so updates in the same request see the final tree.
+        $ins_results = [];
+        $ins_changed = 0;
+        if ($inserts) {
+            list($ins_results, $ins_changed) = bulkseme_content_apply_inserts($tree, $inserts, $id, bulkseme_content_raw_html_allowed((bool) $req->get_param('unsafe_html')));
+        }
+        // The raw-output choice gate reads this request's raw HTML decision; it is set for these updates
+        // only and cleared straight after, so no later request in the same PHP process can inherit it.
+        bulkseme_elementor_request_raw(bulkseme_content_raw_html_allowed((bool) $req->get_param('unsafe_html')));
+        try {
+            list($results, $changed) = $updates ? bulkseme_content_apply_updates($tree, $updates, $force) : [[], 0];
+        } finally {
+            bulkseme_elementor_request_raw(false);
+        }
+        if ($ins_changed) {
+            $max_bytes = (int) apply_filters('bulkseme_elementor_max_tree_bytes', 8388608);
+            $max_depth = (int) apply_filters('bulkseme_elementor_max_tree_depth', 24);
+            $enc       = wp_json_encode($tree);
+            if ($enc === false || strlen($enc) > $max_bytes || bulkseme_elementor_depth($tree) > $max_depth) {
+                return new WP_Error('tree_too_large', 'after the inserts the page would exceed ' . $max_bytes . ' bytes or ' . $max_depth . ' levels of nesting; nothing was written', ['status' => 413]);
+            }
+        }
+        if ($req->get_param('atomic')) {
+            foreach (array_merge($ins_results, $results) as $r) {
+                if (!in_array($r['status'], ['ok', 'unchanged'], true)) {
+                    return new WP_Error('atomic_failed', 'atomic=1 and at least one item failed; nothing was written', ['status' => 409, 'inserts' => $ins_results, 'results' => $results]);
+                }
+            }
+        }
+        $new_ids = [];
+        foreach ($ins_results as $r) {
+            if (isset($r['status'], $r['new_el']) && $r['status'] === 'ok') {
+                // top id first, then every id the copy created inside it, separated by "+"
+                $sub       = isset($r['created']) && is_array($r['created']) ? array_values(array_diff(array_map('strval', $r['created']), [(string) $r['new_el']])) : [];
+                $new_ids[] = implode('+', array_merge([(string) $r['new_el']], $sub));
+            }
+        }
+        // The backup note lists the elements this request inserted, so a text-only revert can take them out again.
+        $note = $new_ids ? 'pre-update inserts:' . implode(',', $new_ids) : 'pre-update';
+        $out  = bulkseme_content_commit_elementor($id, $raw, $tree, $results, $changed + $ins_changed, $dry_run, $note);
+        if (!is_wp_error($out) && $inserts) {
+            $out['inserts'] = $ins_results;
+        }
+        return $out;
     }
 
     if ($det['builder'] === 'siteorigin' || $det['builder'] === 'accordions' || $det['builder'] === 'beaver' || $det['builder'] === 'acf') {
@@ -906,20 +954,60 @@ function bulkseme_content_restore_text_only($post, array $env, $ts) {
             return new WP_Error('backup_corrupt', 'the backup or the current page is not valid Elementor data; nothing was restored', ['status' => 409]);
         }
         $updates = [];
+        // Only nodes whose value differs from the page now are replayed: an unchanged node (which may
+        // hold markup an administrator wrote) is left exactly as it is.
+        $now = [];
+        foreach (bulkseme_elementor_flatten($tree) as $cur) {
+            if (!empty($cur['setting'])) {
+                $now[$cur['el'] . '|' . $cur['setting']] = isset($cur['text']) ? (string) $cur['text'] : '';
+            }
+        }
         foreach (bulkseme_elementor_flatten($backup) as $node) {
             if (empty($node['editable']) || empty($node['setting'])) {
                 continue;
             }
-            // Text, link targets and heading levels only. Custom CSS needs unfiltered_html to write, so it is never part of this.
-            if (isset($node['kind']) && !in_array($node['kind'], ['url', 'tag'], true)) {
+            $nk = $node['el'] . '|' . $node['setting'];
+            if (isset($now[$nk]) && $now[$nk] === (string) $node['text']) {
                 continue;
             }
-            if (isset($node['kind']) && $node['kind'] === 'tag' && !empty($node['default'])) {
+            // Text, link targets, heading levels and choice values (each re-validated by the normal write path).
+            // Custom CSS needs unfiltered_html to write, so it is never part of this.
+            if (isset($node['kind']) && !in_array($node['kind'], ['url', 'tag', 'choice'], true)) {
+                continue;
+            }
+            if (isset($node['kind']) && in_array($node['kind'], ['tag', 'choice'], true) && !empty($node['default'])) {
                 continue; // the backup held no explicit level, only the widget's default
             }
             $updates[] = ['el' => $node['el'], 'setting' => $node['setting'], 'value' => (string) $node['text']];
         }
         list($results, $changed) = bulkseme_content_apply_updates($tree, $updates, true);
+        // Elements the backed-up request inserted (listed in its note) and absent from the backup come out again.
+        // Only removal, and only of those ids: nothing else in the page is touched.
+        $note = isset($env['note']) ? (string) $env['note'] : '';
+        // An inserted element is removed only while its subtree still holds exactly ids that request
+        // created: anything moved into it since, or added inside it, keeps it in place (reported as skipped).
+        if (preg_match('/(?:^|\s)inserts:([A-Za-z0-9_,+-]{1,20000})$/', $note, $m)) {
+            $in_backup = [];
+            bulkseme_elementor_collect_ids($backup, $in_backup);
+            foreach (array_filter(explode(',', $m[1])) as $entry) {
+                $made = array_values(array_filter(explode('+', $entry)));
+                $nid  = isset($made[0]) ? $made[0] : '';
+                $node = $nid !== '' ? bulkseme_elementor_find_node($tree, $nid) : null;
+                if ($node === null || isset($in_backup[$nid])) {
+                    continue;
+                }
+                $inside = [];
+                bulkseme_elementor_collect_ids([$node], $inside);
+                if (array_diff(array_keys($inside), $made) || array_intersect(array_keys($inside), array_keys($in_backup))) {
+                    $results[] = ['el' => $nid, 'setting' => '', 'status' => 'skipped', 'errors' => ['insert_changed_since_keep_it']];
+                    continue;
+                }
+                if (bulkseme_elementor_remove_node($tree, $nid)) {
+                    $results[] = ['el' => $nid, 'setting' => '', 'status' => 'ok', 'removed' => true];
+                    $changed++;
+                }
+            }
+        }
         $out = bulkseme_content_commit_elementor($id, $raw, $tree, $results, $changed, false, 'pre-revert');
     } else {
         $current = bulkseme_mb_load($kind, $id);
@@ -1064,6 +1152,12 @@ add_action('rest_api_init', function () {
         [
             'methods'             => 'POST',
             'permission_callback' => $perm,
+            'args'                => [
+                'dry_run'     => ['type' => 'boolean', 'required' => false],
+                'force'       => ['type' => 'boolean', 'required' => false],
+                'atomic'      => ['type' => 'boolean', 'required' => false],
+                'unsafe_html' => ['type' => 'boolean', 'required' => false],
+            ],
             'callback'            => 'bulkseme_rest_content_post',
         ],
     ]);
@@ -1074,6 +1168,10 @@ add_action('rest_api_init', function () {
     register_rest_route('seo-meta-bridge/v1', '/content/replace', [
         'methods'             => 'POST',
         'permission_callback' => $perm,
+        'args'                => [
+            'dry_run' => ['type' => 'boolean', 'required' => false],
+            'force'   => ['type' => 'boolean', 'required' => false],
+        ],
         'callback'            => 'bulkseme_rest_content_replace',
     ]);
 
