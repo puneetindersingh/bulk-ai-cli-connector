@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.3.0
+Stable tag: 2.3.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -275,6 +275,10 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.3.1 =
+* Fix: `POST /update` with `check` answered "up to date" without asking WordPress.org when the stored time of the last update check was in the future. The "checked less than a minute ago" shortcut took any future time as recent, so the check was skipped until the server's clock caught up (seen on a live site, about an hour ahead). Only a last check between 0 and 60 seconds ago counts now; a future one is treated as stale and the check runs. If WordPress.org does not answer, what WordPress knew is put back and the route answers 503, as before; a last check stamped in the future is put back as 0, so WordPress's own scheduled checks are not held back either.
+* `GET /update` also reports `server_time` and `checked_in_future`, so a stored check time ahead of the server's clock is visible.
+
 = 2.3.0 =
 * New: live SEO panel. Signed-in users who may edit the page in view get an "SEO" item in the admin bar with a count of problems. It opens a panel over the page with four tabs. Overview: the search result and every tag read from the rendered page (title, description, robots including an X-Robots-Tag header, canonical, H1, social tags, images, links), each judged. Edit: SEO title, description and focus keyword with length checks, saved into Yoast SEO or Rank Math. Schema: every JSON-LD block with the plugin that printed it, missing required and recommended properties, duplicate Organization or WebSite nodes, broken JSON, links to an @id that is not on the page; custom schema can be added or set to replace the page's schema. History: the SEO changes on this post.
 * New: change history. Every change to a post's SEO title, description, keyword, canonical, robots, social fields or custom schema is kept on the post (the last 30), with the time, the user and where it came from: the editor, an API key, the REST API, WP-CLI or the live panel.
@@ -446,6 +450,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Per-post permission checks; allowlisted meta keys; URL field sanitisation
 
 == Upgrade Notice ==
+
+= 2.3.1 =
+Fixes POST /update reporting "up to date" when the last update check was stored with a time in the future.
 
 = 2.3.0 =
 Adds a live SEO panel on the site and in the editors, and a history of SEO changes per post. Nothing changes in what your pages print.

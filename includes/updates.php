@@ -59,6 +59,9 @@ function bulkseme_update_state() {
         'installed'            => BULKSEME_VERSION,
         'available'            => ($offer && !empty($offer->new_version) && is_string($offer->new_version)) ? $offer->new_version : null,
         'checked'              => (is_object($found) && !empty($found->last_checked)) ? (int) $found->last_checked : 0,
+        // The server's own clock, so a last check stamped in the future is visible without guessing.
+        'server_time'          => time(),
+        'checked_in_future'    => is_object($found) && !empty($found->last_checked) && (int) $found->last_checked > time(),
         'file_changes_allowed' => (bool) wp_is_file_mod_allowed('capability_update_core'),
     ];
 }
@@ -75,8 +78,13 @@ function bulkseme_update_state() {
  */
 function bulkseme_update_check_now() {
     $before = get_site_transient('update_plugins');
-    // Asked and answered less than a minute ago: that answer still stands.
-    if (is_object($before) && isset($before->checked) && !empty($before->last_checked) && (time() - (int) $before->last_checked) < MINUTE_IN_SECONDS) {
+    // Asked and answered less than a minute ago: that answer still stands. Only an
+    // age between 0 and 60 seconds counts. A last check stamped in the future
+    // (seen live, cause unknown) would otherwise count as "just checked" until the
+    // clock caught up, and the site would answer "up to date" for that long; such
+    // a stamp is treated as stale, so the check runs.
+    $age = (is_object($before) && !empty($before->last_checked)) ? time() - (int) $before->last_checked : null;
+    if (is_object($before) && isset($before->checked) && $age !== null && $age >= 0 && $age < MINUTE_IN_SECONDS) {
         return true;
     }
     if (!function_exists('wp_clean_plugins_cache')) {
@@ -89,6 +97,11 @@ function bulkseme_update_check_now() {
         return true; // WordPress records the list it checked only when WordPress.org answered
     }
     if (is_object($before)) {
+        // Put back what WordPress knew, but not a last check stamped in the future: core
+        // takes that as "just checked" too and would hold its own scheduled checks.
+        if (!empty($before->last_checked) && (int) $before->last_checked > time()) {
+            $before->last_checked = 0;
+        }
         set_site_transient('update_plugins', $before);
     } else {
         delete_site_transient('update_plugins');
