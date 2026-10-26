@@ -70,10 +70,17 @@
 		};
 	}
 
+	// Campaign and click ids added to a link, never part of the page's own address.
+	var TRACKING = /^(utm_\w*|gclid|gbraid|wbraid|dclid|fbclid|msclkid|yclid|ttclid|twclid|igshid|li_fat_id|mc_cid|mc_eid|_ga|_gl|_hsenc|_hsmi|mkt_tok|ref_src|trk\w*)$/i;
+	function query(u) {
+		var keep = [];
+		u.searchParams.forEach(function (v, k) { if (!TRACKING.test(k)) { keep.push(k + '=' + v); } });
+		return keep.sort().join('&');
+	}
 	function sameUrl(a, b) {
 		try {
 			var x = new URL(a), y = new URL(b);
-			return x.host === y.host && x.pathname.replace(/\/$/, '') === y.pathname.replace(/\/$/, '') && x.search === y.search;
+			return x.host === y.host && x.pathname.replace(/\/$/, '') === y.pathname.replace(/\/$/, '') && query(x) === query(y);
 		} catch (e) { return false; }
 	}
 
@@ -84,7 +91,8 @@
 		rows.push(['Title', p.title || '(none)', !p.title ? 'fail' : (tw > 580 ? 'warn' : (p.title.length < 30 ? 'note' : 'pass')),
 			!p.title ? 'Every page needs a title.' : p.title.length + ' characters, ' + Math.round(tw) + ' of 580 px' + (tw > 580 ? '. The end will be cut in results.' : (p.title.length < 30 ? '. Short; room for more of what the page offers.' : ''))]);
 		var dw = px(p.desc, '14px Arial');
-		rows.push(['Description', p.desc || '(none)', !p.desc || dw > 920 || p.desc.length < 70 ? 'warn' : 'pass',
+		// A short description is a note: it may say all the page needs to.
+		rows.push(['Description', p.desc || '(none)', !p.desc || dw > 920 ? 'warn' : (p.desc.length < 70 ? 'note' : 'pass'),
 			!p.desc ? 'Search engines will pick text from the page.' : p.desc.length + ' characters' + (dw > 920 ? '. The end will be cut.' : (p.desc.length < 70 ? '. Under 70 characters says little.' : ''))]);
 		var noindex = /noindex/i.test(p.robots) || /noindex/i.test(p.headerRobots);
 		rows.push(['Indexing', noindex ? 'noindex' : 'index', noindex ? 'fail' : 'pass',
@@ -182,6 +190,8 @@
 					if (t === 'Product') { issues.push(['note', label + ' on a page that is not a shop product', 'Product markup is for an item sold on this page. A service is better described as Service, with no price added.']); }
 					return;
 				}
+				// A logo matters for the site's own business, not for an organizer or sponsor nested in another node.
+				if (t === 'Organization' && !o.top) { return; }
 				(rule.req || []).forEach(function (k) {
 					if (!has(o.node, k)) { issues.push(['fail', label + ': ' + k + ' is missing', 'Required for this type to show as a rich result.']); }
 				});
@@ -195,7 +205,8 @@
 		});
 		var orgs = {}, sites = {};
 		nodes.forEach(function (o) {
-			if (types(o.node).indexOf('Organization') !== -1) { orgs[str(o.node['@id']) || ('block' + o.block.index)] = true; }
+			// Only Organizations with an @id are counted: one without is an organizer, author or sponsor, not a rival description.
+			if (types(o.node).indexOf('Organization') !== -1 && str(o.node['@id'])) { orgs[str(o.node['@id'])] = true; }
 			if (types(o.node).indexOf('WebSite') !== -1) { sites[o.block.index] = true; }
 		});
 		if (Object.keys(orgs).length > 1) { issues.push(['warn', Object.keys(orgs).length + ' different Organization nodes', 'Two sources describe the business; search engines may not know which to trust.']); }
