@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.3.1
+Stable tag: 2.3.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -275,6 +275,12 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.3.2 =
+* Live SEO panel: no price, offer or product checks on pages that are not WooCommerce products, so a service page is no longer told to add a price nobody set.
+* Live SEO panel: fewer busywork warnings. A short title or description and a page without structured data are notes now; the Social row warns only without a share image; nested organizers and sponsors are not checked as the business.
+* Live SEO panel: the canonical check ignores tracking parameters (utm_*, gclid, fbclid and similar) and parameter order.
+* `GET /status` reports `merchant_enrichment.enabled` false when WooCommerce is not active.
+
 = 2.3.1 =
 * Fix: `POST /update` with `check` answered "up to date" without asking WordPress.org when the stored time of the last update check was in the future. The "checked less than a minute ago" shortcut took any future time as recent, so the check was skipped until the server's clock caught up (seen on a live site, about an hour ahead). Only a last check between 0 and 60 seconds ago counts now; a future one is treated as stale and the check runs. If WordPress.org does not answer, what WordPress knew is put back and the route answers 503, as before; a last check stamped in the future is put back as 0, so WordPress's own scheduled checks are not held back either.
 * `GET /update` also reports `server_time` and `checked_in_future`, so a stored check time ahead of the server's clock is visible.
@@ -418,38 +424,13 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * `/import` reads `kind` and `taxonomy` columns from CSV uploads so a mixed posts+terms export round-trips cleanly.
 * Yoast term meta is stored in the `wpseo_taxonomy_meta` option (read-modify-write per call). Rank Math term meta uses `wp_termmeta`. Per-taxonomy `edit_terms` capability is enforced on every write.
 
-= 1.2.6 =
-* `/export` now includes `title_chars` and `desc_chars` helper columns by default: character counts for the SEO title and description so you can spot over-limit cells at a glance when editing in Excel/LibreOffice/Google Sheets. Pass `?lengths=0` to get the original column shape. `/import` ignores these columns, so exports round-trip unchanged. Counts are static at export time.
-* MCP `export_csv` tool gains an `include_lengths` boolean (default true) that maps to the new query param.
-
-= 1.2.5 =
-* `/export` now writes a UTF-8 BOM and CRLF line endings so curly quotes, em dashes and other non-ASCII characters open correctly in Excel, LibreOffice and Google Sheets instead of appearing as mojibake (e.g. `’` rendering as `â€™`).
-* `/import` now strips a leading UTF-8 BOM before parsing, so re-uploading an exported CSV doesn't silently drop the `id` column on round-trip.
-
-= 1.2.4 =
-* `/import` now treats empty CSV cells as "do not touch this field" instead of overwriting existing values with empty strings. Lets you upload a partially-filled CSV (e.g. only the `description` column populated) without wiping titles, OG fields, etc.
-
-= 1.2.3 =
-* `/bulk` now accepts friendly field aliases (`title`, `description`, `focus_kw`, ...) in addition to raw Yoast/Rank Math meta keys, so CSV columns from `/export` round-trip through `/bulk` without manual remapping.
-* `/status` now reports the actual plugin version dynamically instead of a hardcoded string.
-
-= 1.2.2 =
-* Updated author metadata
-
-= 1.2.1 =
-* Replaced raw fopen/fclose with WP_Filesystem (CSV import) and string-builder CSV (export) per Plugin Check
-* Bumped tested-up-to to 6.9
-* Trimmed short description to <=150 chars
-
-= 1.2.0 =
-* Initial public release
-* REST endpoints: /status, /bulk, /export, /import
-* Standard `/wp/v2/posts/{id}` route registers Yoast and Rank Math meta keys
-* Bundled Node.js MCP server companion
-* Auto-detection of active SEO plugin (Yoast / Rank Math)
-* Per-post permission checks; allowlisted meta keys; URL field sanitisation
+= 1.2.0 to 1.2.6 =
+* First releases: `/status`, `/bulk`, `/export` and `/import` for Yoast and Rank Math, with per-post permission checks and the bundled MCP server. Later 1.2.x builds added the length columns and UTF-8 BOM in `/export`, field aliases in `/bulk`, and empty CSV cells left alone by `/import`.
 
 == Upgrade Notice ==
+
+= 2.3.2 =
+The live SEO panel no longer asks for prices or product markup on pages that are not WooCommerce products, and shows fewer busywork warnings.
 
 = 2.3.1 =
 Fixes POST /update reporting "up to date" when the last update check was stored with a time in the future.

@@ -71,16 +71,19 @@
 	}
 
 	// Campaign and click ids added to a link, never part of the page's own address.
-	var TRACKING = /^(utm_\w*|gclid|gbraid|wbraid|dclid|fbclid|msclkid|yclid|ttclid|twclid|igshid|li_fat_id|mc_cid|mc_eid|_ga|_gl|_hsenc|_hsmi|mkt_tok|ref_src|trk\w*)$/i;
+	var TRACKING = /^(utm_\w*|gclid|gbraid|wbraid|dclid|fbclid|msclkid|yclid|ttclid|twclid|igshid|li_fat_id|mc_cid|mc_eid|_ga|_gl|_hsenc|_hsmi|mkt_tok|trk|trkCampaign|trkInfo)$/i;
+	// The other parameters, encoded again so a value holding & or = cannot pass for two parameters.
+	// Sorted by name only (a stable sort), so a repeated name keeps its order.
 	function query(u) {
 		var keep = [];
-		u.searchParams.forEach(function (v, k) { if (!TRACKING.test(k)) { keep.push(k + '=' + v); } });
-		return keep.sort().join('&');
+		u.searchParams.forEach(function (v, k) { if (!TRACKING.test(k)) { keep.push([encodeURIComponent(k), encodeURIComponent(v)]); } });
+		keep.sort(function (p, q) { return p[0] < q[0] ? -1 : (p[0] > q[0] ? 1 : 0); });
+		return keep.map(function (p) { return p[0] + '=' + p[1]; }).join('&');
 	}
 	function sameUrl(a, b) {
 		try {
 			var x = new URL(a), y = new URL(b);
-			return x.host === y.host && x.pathname.replace(/\/$/, '') === y.pathname.replace(/\/$/, '') && query(x) === query(y);
+			return x.protocol === y.protocol && x.host === y.host && x.pathname.replace(/\/$/, '') === y.pathname.replace(/\/$/, '') && query(x) === query(y);
 		} catch (e) { return false; }
 	}
 
@@ -137,8 +140,8 @@
 		VideoObject: { req: ['name', 'thumbnailUrl', 'uploadDate'] },
 		JobPosting: { req: ['title', 'description', 'datePosted', 'hiringOrganization'] }
 	};
-	// Types whose checks ask for offers or prices: applied on shop product pages only.
-	var COMMERCE = { Product: true, Offer: true };
+	// Checks that ask for offers or prices: applied on WooCommerce product pages only.
+	var COMMERCE = { Offer: true };
 	var LOCAL = /^(LocalBusiness|Restaurant|Dentist|Store|AutoRepair|HomeAndConstructionBusiness|ProfessionalService|LegalService|MedicalBusiness|HealthAndBeautyBusiness|FoodEstablishment|LodgingBusiness|Plumber|Electrician|RoofingContractor|HVACBusiness|RealEstateAgent|AccountingService|FinancialService)$/;
 	// JSON from a page can hold an object where text belongs ({"toString": 1} cannot even be
 	// turned into a string), so only strings and numbers are ever read as text.
@@ -184,11 +187,13 @@
 				if (!rule) { return; }
 				var name = str(o.node.name) || str(o.node.headline);
 				var label = t + (name ? ' "' + name.slice(0, 40) + '"' : '');
-				// Offers, prices and product fields only matter where a shop product is sold. A service
-				// page (an OfferCatalog of services, say) is never told to add a price nobody has set.
-				if (COMMERCE[t] && !cfg.commerce) {
-					if (t === 'Product') { issues.push(['note', label + ' on a page that is not a shop product', 'Product markup is for an item sold on this page. A service is better described as Service, with no price added.']); }
-					return;
+				// Offers and prices are only asked for where a WooCommerce product is sold. A service page
+				// (an OfferCatalog of services, say) is never told to add a price nobody has set. A Product
+				// elsewhere still needs its name, but is not asked for offers, reviews or ratings.
+				if (COMMERCE.hasOwnProperty(t) && !cfg.commerce) { return; }
+				if (t === 'Product' && !cfg.commerce) {
+					issues.push(['note', label + ' on a page that is not a WooCommerce product', 'Offers and prices are not checked here. For a service, Service fits better than Product.']);
+					rule = { req: rule.req };
 				}
 				// A logo matters for the site's own business, not for an organizer or sponsor nested in another node.
 				if (t === 'Organization' && !o.top) { return; }
@@ -205,8 +210,9 @@
 		});
 		var orgs = {}, sites = {};
 		nodes.forEach(function (o) {
-			// Only Organizations with an @id are counted: one without is an organizer, author or sponsor, not a rival description.
-			if (types(o.node).indexOf('Organization') !== -1 && str(o.node['@id'])) { orgs[str(o.node['@id'])] = true; }
+			// Counted: Organizations with an @id, and top-level ones without (a second source describing
+			// the business). A nested one without an @id is an organizer, author or sponsor.
+			if (types(o.node).indexOf('Organization') !== -1 && (str(o.node['@id']) || o.top)) { orgs[str(o.node['@id']) ? 'id:' + str(o.node['@id']) : 'block' + o.block.index] = true; }
 			if (types(o.node).indexOf('WebSite') !== -1) { sites[o.block.index] = true; }
 		});
 		if (Object.keys(orgs).length > 1) { issues.push(['warn', Object.keys(orgs).length + ' different Organization nodes', 'Two sources describe the business; search engines may not know which to trust.']); }

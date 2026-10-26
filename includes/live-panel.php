@@ -345,7 +345,9 @@ function bulkseme_live_values(array $t) {
  * prices, because nothing is sold there and a price nobody gave would be made up.
  */
 function bulkseme_live_is_product($post_id) {
-    return function_exists('wc_get_product') && get_post_type($post_id) === 'product';
+    // An empty id would make get_post_type() read the global post instead.
+    $post_id = (int) $post_id;
+    return $post_id > 0 && function_exists('wc_get_product') && get_post_type($post_id) === 'product';
 }
 
 /** The name of the plugin printing the SEO tags, for the panel's wording. */
