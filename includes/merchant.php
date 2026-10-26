@@ -625,7 +625,8 @@ function bulkseme_merchant_status() {
     $norm = bulkseme_merchant_normalise_config(bulkseme_merchant_config());
     $tax  = bulkseme_merchant_brand_taxonomy();
     return [
-        'enabled'        => bulkseme_merchant_enabled(),
+        // Enrichment only ever runs on WooCommerce product pages, so without WooCommerce it is off.
+        'enabled'        => bulkseme_merchant_enabled() && function_exists('wc_get_product'),
         'woocommerce'    => function_exists('wc_get_product'),
         'brand_taxonomy' => $tax,
         'brand_taxonomy_exists' => taxonomy_exists($tax),

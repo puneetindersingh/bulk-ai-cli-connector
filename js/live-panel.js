@@ -80,7 +80,8 @@
 	function judge(p) {
 		var rows = [];
 		var tw = px(p.title, '20px Arial');
-		rows.push(['Title', p.title || '(none)', !p.title ? 'fail' : (tw > 580 || p.title.length < 30 ? 'warn' : 'pass'),
+		// A short title is not a fault (a brand name on a home page), so it is a note, not a warning.
+		rows.push(['Title', p.title || '(none)', !p.title ? 'fail' : (tw > 580 ? 'warn' : (p.title.length < 30 ? 'note' : 'pass')),
 			!p.title ? 'Every page needs a title.' : p.title.length + ' characters, ' + Math.round(tw) + ' of 580 px' + (tw > 580 ? '. The end will be cut in results.' : (p.title.length < 30 ? '. Short; room for more of what the page offers.' : ''))]);
 		var dw = px(p.desc, '14px Arial');
 		rows.push(['Description', p.desc || '(none)', !p.desc || dw > 920 || p.desc.length < 70 ? 'warn' : 'pass',
@@ -94,8 +95,9 @@
 		}
 		rows.push(['H1', p.h1s.length ? p.h1s[0] : '(none)', p.h1s.length === 1 ? 'pass' : (p.h1s.length ? 'warn' : 'fail'),
 			p.h1s.length === 1 ? 'One main heading.' : (p.h1s.length ? p.h1s.length + ' H1 headings; one is clearer.' : 'No H1 heading on the page.')]);
-		rows.push(['Social', p.ogTitle || '(no og:title)', p.ogTitle && p.ogImage ? 'pass' : 'warn',
-			p.ogImage ? 'Share image set.' : 'No share image: shared links will show without a picture.']);
+		// Without og:title, shared links use the page title, so only a missing image is worth a look.
+		rows.push(['Social', p.ogTitle || '(no og:title)', p.ogImage ? 'pass' : 'warn',
+			p.ogImage ? 'Share image set.' + (p.ogTitle ? '' : ' Shared links use the page title.') : 'No share image: shared links will show without a picture.']);
 		rows.push(['Images', p.images + ' on the page', p.noAlt ? 'warn' : 'pass',
 			p.noAlt ? p.noAlt + ' without an alt attribute.' : 'Every image has an alt attribute.']);
 		rows.push(['Links', p.internal + ' internal, ' + p.external + ' outbound', p.internal ? 'pass' : 'warn',
@@ -200,7 +202,7 @@
 		if (Object.keys(sites).length > 1) { issues.push(['warn', 'WebSite described in ' + Object.keys(sites).length + ' blocks', 'Usually two plugins printing schema side by side.']); }
 		var dangling = refs.filter(function (r, i, a) { return r && !ids[r] && a.indexOf(r) === i; });
 		if (dangling.length) { issues.push(['note', dangling.length + ' link' + (dangling.length === 1 ? '' : 's') + ' to an @id not on this page', dangling.slice(0, 3).join(', ')]); }
-		if (!blocks.length) { issues.push(['warn', 'No structured data', 'Search engines get no machine-readable description of this page.']); }
+		if (!blocks.length) { issues.push(['note', 'No structured data', 'Search engines get no machine-readable description of this page.']); }
 		return { blocks: blocks, nodes: nodes, issues: issues };
 	}
 
@@ -485,7 +487,7 @@
 				h('a', { href: 'https://validator.schema.org/#url=' + url, target: '_blank', rel: 'noopener', text: 'Schema validator' })]));
 			var v = cfg.values;
 			if (cfg.target.kind !== 'view' && v.can_schema) {
-				var ta = h('textarea', { 'class': 'code', id: 'lv-schema', spellcheck: 'false', placeholder: '{\n  "@type": "FAQPage",\n  "mainEntity": [ ... ]\n}' });
+				var ta = h('textarea', { 'class': 'code', id: 'lv-schema', spellcheck: 'false', placeholder: '{\n  "@type": "Service",\n  "name": "...",\n  "provider": { "@id": "..." }\n}' });
 				ta.value = v.schema || '';
 				var mode = h('select', { id: 'lv-mode' }, [h('option', { value: 'add', text: 'Add to the page\u2019s schema' }), h('option', { value: 'replace', text: 'Replace the page\u2019s schema' })]);
 				mode.value = v.schema_mode || 'add';
