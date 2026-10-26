@@ -127,6 +127,8 @@
 		VideoObject: { req: ['name', 'thumbnailUrl', 'uploadDate'] },
 		JobPosting: { req: ['title', 'description', 'datePosted', 'hiringOrganization'] }
 	};
+	// Types whose checks ask for offers or prices: applied on shop product pages only.
+	var COMMERCE = { Product: true, Offer: true };
 	var LOCAL = /^(LocalBusiness|Restaurant|Dentist|Store|AutoRepair|HomeAndConstructionBusiness|ProfessionalService|LegalService|MedicalBusiness|HealthAndBeautyBusiness|FoodEstablishment|LodgingBusiness|Plumber|Electrician|RoofingContractor|HVACBusiness|RealEstateAgent|AccountingService|FinancialService)$/;
 	// JSON from a page can hold an object where text belongs ({"toString": 1} cannot even be
 	// turned into a string), so only strings and numbers are ever read as text.
@@ -172,6 +174,12 @@
 				if (!rule) { return; }
 				var name = str(o.node.name) || str(o.node.headline);
 				var label = t + (name ? ' "' + name.slice(0, 40) + '"' : '');
+				// Offers, prices and product fields only matter where a shop product is sold. A service
+				// page (an OfferCatalog of services, say) is never told to add a price nobody has set.
+				if (COMMERCE[t] && !cfg.commerce) {
+					if (t === 'Product') { issues.push(['note', label + ' on a page that is not a shop product', 'Product markup is for an item sold on this page. A service is better described as Service, with no price added.']); }
+					return;
+				}
 				(rule.req || []).forEach(function (k) {
 					if (!has(o.node, k)) { issues.push(['fail', label + ': ' + k + ' is missing', 'Required for this type to show as a rich result.']); }
 				});

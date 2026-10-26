@@ -340,6 +340,14 @@ function bulkseme_live_values(array $t) {
     return $out;
 }
 
+/**
+ * True only for a WooCommerce product. Elsewhere the panel does not ask for offers or
+ * prices, because nothing is sold there and a price nobody gave would be made up.
+ */
+function bulkseme_live_is_product($post_id) {
+    return function_exists('wc_get_product') && get_post_type($post_id) === 'product';
+}
+
 /** The name of the plugin printing the SEO tags, for the panel's wording. */
 function bulkseme_live_engine() {
     $plugin = bulkseme_active_keys()['plugin'];
@@ -381,6 +389,7 @@ add_action('wp_enqueue_scripts', function () {
         'nonce'   => $t['kind'] === 'view' ? '' : wp_create_nonce('wp_rest'),
         'target'  => $t,
         'engine'  => bulkseme_live_engine(),
+        'commerce' => $t['kind'] === 'post' && bulkseme_live_is_product($t['id']),
         'values'  => bulkseme_live_values($t),
         'history' => $t['kind'] === 'post' ? bulkseme_history_for($t['id']) : [],
         'site'    => get_bloginfo('name', 'display'),
@@ -428,6 +437,7 @@ add_action('admin_enqueue_scripts', function ($hook) {
         'url'       => $published ? (string) get_permalink($post) : '',
         'published' => $published,
         'engine'    => bulkseme_live_engine(),
+        'commerce'  => bulkseme_live_is_product($post->ID),
         'history'   => bulkseme_history_for($post->ID),
         'target'    => ['kind' => 'post', 'id' => (int) $post->ID, 'label' => $pto->labels->singular_name, 'edit' => ''],
     ]);
