@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.3.2
+Stable tag: 2.4.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -58,7 +58,7 @@ Version 2.0 goes past SEO fields. The same REST API can now read and change the 
 * **Redirects**: `POST /redirect` adds a 301, 302, 307 or 410 rule. On a site that uses Rank Math's Redirections the rule goes into Rank Math itself. Elsewhere the plugin serves it.
 * **Copy a page**: `POST /clone` copies a page with its template, design meta and featured image into a new draft.
 * **Merchant listing fields**: fills in return policy, shipping details and brand on WooCommerce Product schema from one stored policy.
-* **API keys**: for sites where a security plugin or the host blocks application passwords. Made on **Tools > Agent API Keys**, shown once, stored only as a hash.
+* **API keys**: for sites where a security plugin or the host blocks application passwords. Made on **Settings > AI CLI Connector**, shown once, stored only as a hash.
 
 = What's included =
 
@@ -130,7 +130,7 @@ The MCP server has ten tools, for SEO meta and schema. Page content, redirects a
 * Page copy is always cleaned with the post content allowlist (`wp_kses_post`), whoever sends it. Scripts and event handlers are never stored
 * Meta keys are allowlisted to the active plugin's known fields
 * URL-shaped fields (canonical, og_image, twitter_image, link URLs, redirect destinations) sanitised through `esc_url_raw`
-* One admin screen, **Tools > Agent API Keys**, and only administrators can open it
+* One admin screen, **Settings > AI CLI Connector**, and only administrators can open it
 
 = Trademarks =
 
@@ -139,8 +139,8 @@ Yoast SEO is a trademark of Yoast BV. Rank Math is a trademark of RankMath. Clau
 == Installation ==
 
 1. Install from the WordPress.org plugin directory: **Plugins → Add New**, search for **Bulk AI CLI Connector**. Or with WP-CLI: `wp plugin install bulk-seo-meta-editor-for-ai-agents --activate`. Or upload `bulk-seo-meta-editor-for-ai-agents.zip` via **Plugins → Add New → Upload Plugin**
-2. Activate. The REST API is live as soon as the plugin is active
-3. Set up an Application Password: **Users → Your Profile → Application Passwords → Add New**. If your site blocks application passwords, make an API key instead under **Tools → Agent API Keys**
+2. Activate. A notice offers **Set up now**, or click **Settings** next to the plugin on the Plugins screen. Both open **Settings > AI CLI Connector**
+3. Click **Make my key**, then **Copy connection details**, and paste the site address, username and key into your AI tool. An Application Password (**Users > Your Profile > Application Passwords**) works too where the host allows it
 4. Test: `curl -u 'username:app pass' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`, or with a key: `curl -H 'X-Bulkseme-Key: bsme_...' https://yoursite.com/wp-json/seo-meta-bridge/v1/status`
 
 For the optional MCP server, install via npm: `npm install -g bulk-seo-meta-editor-mcp` and configure Claude Desktop / Claude Code with `WP_BASE_URL`, `WP_USER`, and `WP_APP_PASS` environment variables.
@@ -149,7 +149,7 @@ For the optional MCP server, install via npm: `npm install -g bulk-seo-meta-edit
 
 = How do I connect Claude or ChatGPT to WordPress? =
 
-Install and activate the plugin, then create an Application Password under **Users → Your Profile**, or an API key under **Tools → Agent API Keys** if your host blocks application passwords. Give the site address and that credential to your agent. Claude Code and other command-line agents call the REST routes under `/wp-json/seo-meta-bridge/v1/` directly. Claude Desktop uses the bundled MCP server. ChatGPT and other tools work wherever they can send an authenticated HTTPS request. Start with `GET /status`, which reports the active SEO plugin and the fields available.
+Install and activate the plugin, then open **Settings > AI CLI Connector** (or click **Settings** under the plugin's name on the Plugins screen), make a key and copy the connection details into your agent. An Application Password under **Users > Your Profile** works too where the host allows it. Claude Code and other command-line agents call the REST routes under `/wp-json/seo-meta-bridge/v1/` directly. Claude Desktop uses the bundled MCP server. ChatGPT and other tools work wherever they can send an authenticated HTTPS request. Start with `GET /status`, which reports the active SEO plugin and the fields available.
 
 = Is this an MCP server for WordPress? =
 
@@ -237,7 +237,7 @@ No. Every value is cleaned with WordPress's post content allowlist (`wp_kses_pos
 
 = How do API keys work, and are they safe? =
 
-An administrator makes a key on **Tools > Agent API Keys**. It is shown once and only its SHA-256 hash is stored, so a copy of the database holds nothing that can be replayed. A key signs REST API requests in as the account that made it, with that account's capabilities, and is removed when that account is deleted. It is read only for REST API requests over HTTPS, so wp-login.php, wp-admin, admin-ajax and XML-RPC never see it.
+An administrator makes a key on **Settings > AI CLI Connector**. It is shown once and only its SHA-256 hash is stored, so a copy of the database holds nothing that can be replayed. A key signs REST API requests in as the account that made it, with that account's capabilities, and is removed when that account is deleted. It is read only for REST API requests over HTTPS, so wp-login.php, wp-admin, admin-ajax and XML-RPC never see it.
 
 By default a key is accepted on this plugin's own routes and nowhere else (and not on `/update`, which installs a new version of the plugin). If a tool also needs WordPress's own REST routes (to list posts or upload media, for example), make the key with the wider scope. Such a key is as powerful as an application password for your account, so store it like a password. Revoke any key on the same screen. To switch key sign-in off entirely: `add_filter('bulkseme_api_key_auth_enabled', '__return_false');`.
 
@@ -274,6 +274,12 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted, plus the plugin's own `schema` and `schema_mode` fields and, since 1.9.0, `post_title`. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 2.4.0 =
+* Easier setup. The key screen moved from Tools > Agent API Keys to **Settings > AI CLI Connector**, and the old address forwards to it.
+* A **Settings** link next to the plugin on the Plugins screen.
+* After activation, a dismissible notice on the Dashboard and Plugins screen offers **Set up now**. It goes away once a key is made or it is dismissed, and an update never shows it.
+* The setup screen walks through three steps, and a new key is shown together with the site address and username behind one **Copy connection details** button. The curl examples moved under "For developers".
 
 = 2.3.2 =
 * Live SEO panel: no price, offer or product checks on pages that are not WooCommerce products, so a service page is no longer told to add a price nobody set.
@@ -428,6 +434,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * First releases: `/status`, `/bulk`, `/export` and `/import` for Yoast and Rank Math, with per-post permission checks and the bundled MCP server. Later 1.2.x builds added the length columns and UTF-8 BOM in `/export`, field aliases in `/bulk`, and empty CSV cells left alone by `/import`.
 
 == Upgrade Notice ==
+
+= 2.4.0 =
+The key screen moved to Settings > AI CLI Connector, with a Settings link on the Plugins screen and a guided setup. Existing keys keep working.
 
 = 2.3.2 =
 The live SEO panel no longer asks for prices or product markup on pages that are not WooCommerce products, and shows fewer busywork warnings.

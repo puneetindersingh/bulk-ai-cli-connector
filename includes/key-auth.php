@@ -4,7 +4,7 @@
  *
  * Application passwords are the default way to reach this plugin. Some security
  * plugins and hosts switch them off or block the endpoint that creates them, so
- * an administrator can make a key on Tools > Agent API Keys instead.
+ * an administrator can make a key on Settings > AI CLI Connector instead.
  *
  * What a key is:
  *   - Stored only as a SHA-256 hash. The key itself is shown once, when it is

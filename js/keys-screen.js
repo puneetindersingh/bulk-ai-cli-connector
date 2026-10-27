@@ -1,4 +1,4 @@
-/* Tools > Agent API Keys: copy a new key once, and confirm before a key is revoked. */
+/* Settings > AI CLI Connector: copy the connection details once, and confirm before a key is revoked. */
 ( function () {
 	'use strict';
 
@@ -12,12 +12,21 @@
 		button.textContent = text.copied || 'Copied';
 	}
 
+	// Clear the key only when it really reached the clipboard. If the browser
+	// refused, leave it selected so it can be copied by hand.
 	function legacyCopy() {
+		var copied = false;
 		try {
 			field.select();
-			document.execCommand( 'copy' );
+			copied = document.execCommand( 'copy' );
 		} catch ( e ) {}
-		done();
+		if ( copied ) {
+			done();
+		} else {
+			field.focus();
+			field.select();
+			button.textContent = text.manual || 'Press Ctrl+C to copy';
+		}
 	}
 
 	if ( field && button ) {

@@ -16,11 +16,13 @@ if (is_multisite()) {
         switch_to_blog((int) $bulkseme_site_id);
         delete_option('bulkseme_api_keys');
         delete_option('bulkseme_api_keys_used');
+        delete_option('bulkseme_setup_pending');
         delete_post_meta_by_key('_bulkseme_seo_history');
         restore_current_blog();
     }
 } else {
     delete_option('bulkseme_api_keys');
     delete_option('bulkseme_api_keys_used');
+    delete_option('bulkseme_setup_pending');
     delete_post_meta_by_key('_bulkseme_seo_history');
 }

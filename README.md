@@ -79,7 +79,7 @@ Use it as Basic Auth: `username:application password`
 
 ### API keys (2.0.0+)
 
-For sites where a security plugin or the host blocks application passwords. An administrator makes a key under **Tools → Agent API Keys**. It is shown once and only its SHA-256 hash is stored.
+For sites where a security plugin or the host blocks application passwords. An administrator makes a key under **Settings → AI CLI Connector**. It is shown once and only its SHA-256 hash is stored.
 
     curl -H 'X-Bulkseme-Key: bsme_...' https://example.com/wp-json/seo-meta-bridge/v1/status
     curl -u 'username:bsme_...'        https://example.com/wp-json/seo-meta-bridge/v1/status
@@ -324,7 +324,7 @@ Then in Claude: *"Pull the SEO meta for post 123 and rewrite the title to be ≤
 - Meta keys are allowlisted to the active plugin's known fields (plus the plugin's own `schema`, `schema_mode` and `post_title`). Arbitrary postmeta writes are rejected.
 - Stored schema refuses raw `<` or `>` on write and strips them again on output; the standalone block is additionally encoded with `JSON_HEX_TAG` and `JSON_HEX_AMP`.
 - URL-shaped fields are run through `esc_url_raw` before save.
-- One admin screen, **Tools → Agent API Keys**, for administrators only.
+- One admin screen, **Settings → AI CLI Connector**, for administrators only.
 
 ## Troubleshooting
 
