@@ -197,6 +197,8 @@ add_action('rest_api_init', function () {
                 'supports_term_acf' => bulkseme_acf_active(),
                 'supports_redirects' => true,
                 'supports_update'   => true,
+                'supports_mcp'      => true,
+                'mcp_url'           => bulkseme_mcp_url(),
                 'drops_invalid_product_schema' => (bool) apply_filters('bulkseme_drop_invalid_product_schema', true),
                 'builders'          => bulkseme_builders_status(current_user_can('activate_plugins')),
                 'content_editable_builders' => ['elementor', 'gutenberg', 'classic', 'divi', 'wpbakery', 'siteorigin', 'accordions', 'beaver', 'acf'],

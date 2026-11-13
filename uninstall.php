@@ -17,6 +17,7 @@ if (is_multisite()) {
         delete_option('bulkseme_api_keys');
         delete_option('bulkseme_api_keys_used');
         delete_option('bulkseme_setup_pending');
+        delete_option('bulkseme_mcp_seen');
         delete_post_meta_by_key('_bulkseme_seo_history');
         restore_current_blog();
     }
@@ -24,5 +25,6 @@ if (is_multisite()) {
     delete_option('bulkseme_api_keys');
     delete_option('bulkseme_api_keys_used');
     delete_option('bulkseme_setup_pending');
+    delete_option('bulkseme_mcp_seen');
     delete_post_meta_by_key('_bulkseme_seo_history');
 }

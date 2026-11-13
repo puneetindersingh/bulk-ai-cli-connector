@@ -251,7 +251,33 @@ The caller needs `edit_post` on the page (`edit_term` for a term), and where the
 
 `GET` shows the installed version and the version WordPress.org offers. `POST {"check": true}` asks WordPress to look for a new version now, `POST {"install": true}` installs the offered version the way the Update button does (the plugin stays active). It runs WordPress's own update code, so the build can only come from WordPress.org. Installing needs the right to update plugins, a site that forbids file changes is left alone, and an API key with the default scope cannot use the route.
 
-## MCP server (Claude Code / Claude Desktop)
+## MCP server inside the plugin (2.5.0+)
+
+The plugin is its own MCP server. Nothing to install on your computer.
+
+1. Settings > AI CLI Connector > **Make my key**.
+2. Copy the setup for your tool. Claude Code:
+
+```
+claude mcp add --transport http wp-your-site 'https://your-site.com/wp-json/seo-meta-bridge/v1/mcp' \
+  --header 'Authorization: Bearer bsme_...'
+```
+
+Cursor, VS Code and other clients that take an MCP settings file:
+
+```json
+{ "mcpServers": { "wp-your-site": {
+    "url": "https://your-site.com/wp-json/seo-meta-bridge/v1/mcp",
+    "headers": { "Authorization": "Bearer bsme_..." } } } }
+```
+
+Tools: `get_status`, `export_seo`, `update_seo`, `get_schema`, `update_image_alts`, `read_content`, `edit_content`, `replace_text`, `list_backups`, `undo_content_change`, `clone_page`, `list_redirects`, `save_redirect`, `delete_redirect`, `flush_sitemaps`.
+
+How it works: `POST /wp-json/seo-meta-bridge/v1/mcp`, JSON-RPC 2.0 over Streamable HTTP, one JSON answer per request (no event stream, no session; GET and DELETE answer 405). It signs nobody in by itself: the request needs an API key (`Authorization: Bearer`, `X-Bulkseme-Key` or Basic auth), an application password, or a browser session with a REST nonce, and the user needs `edit_posts`. Each tool runs one of the plugin's own routes inside the same request, so every route's argument and capability checks apply unchanged, and a default-scope key stays inside the plugin's routes. Requests with an `Origin` header from another site are refused. Security plugins or firewall rules that match on the REST path only see `/mcp`; the inner route's own checks still run.
+
+claude.ai and the ChatGPT app add remote servers through an OAuth sign-in, which this version does not offer.
+
+## Bundled npm MCP server (older setup)
 
 A Node.js MCP server is bundled in `mcp-server/`. Adds these tools to Claude:
 

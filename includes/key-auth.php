@@ -91,9 +91,9 @@ function bulkseme_looks_like_key($value) {
 
 /**
  * The key this request carries, or ''. Read from the X-Bulkseme-Key header
- * (X-SEOCLI-Key is accepted as a second name for it) or from the password of
+ * (X-SEOCLI-Key is accepted as a second name for it), from the password of
  * HTTP Basic auth, which WordPress has already split out of the Authorization
- * header.
+ * header, or from an Authorization: Bearer header.
  */
 function bulkseme_request_key() {
     foreach (['HTTP_X_BULKSEME_KEY', 'HTTP_X_SEOCLI_KEY', 'PHP_AUTH_PW'] as $name) {
@@ -104,6 +104,20 @@ function bulkseme_request_key() {
         $value = trim(sanitize_text_field(wp_unslash($_SERVER[$name])));
         if (bulkseme_looks_like_key($value)) {
             return $value;
+        }
+    }
+    // "Authorization: Bearer <key>", the form most MCP clients send. Some
+    // servers hand the header over only under the REDIRECT_ name.
+    foreach (['HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION'] as $name) {
+        if (empty($_SERVER[$name]) || !is_string($_SERVER[$name])) {
+            continue;
+        }
+        $value = trim(sanitize_text_field(wp_unslash($_SERVER[$name])));
+        if (strncasecmp($value, 'Bearer ', 7) === 0) {
+            $value = trim(substr($value, 7));
+            if (bulkseme_looks_like_key($value)) {
+                return $value;
+            }
         }
     }
     return '';
@@ -167,7 +181,7 @@ function bulkseme_own_routes() {
     return [
         '', '/status', '/schema', '/sitemap/flush', '/bulk', '/bulk-alts', '/export', '/import',
         '/content', '/content/replace', '/content/backups', '/content/revert', '/clone',
-        '/redirect', '/merchant-policy', '/register-key',
+        '/redirect', '/merchant-policy', '/register-key', '/mcp',
     ];
 }
 
