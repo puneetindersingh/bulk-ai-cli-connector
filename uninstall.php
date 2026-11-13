@@ -27,6 +27,11 @@ function bulkseme_uninstall_oauth_rows() {
     global $wpdb;
     // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- uninstall clean-up by prefix; nothing reads these rows afterwards.
     $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $wpdb->esc_like('bulkseme_oauth_g_') . '%', $wpdb->esc_like('bulkseme_oauth_rv_') . '%'));
+    // Short-lived sign-in codes, used-code notes and remembered refresh answers (transients).
+    foreach (array('bulkseme_oac_', 'bulkseme_oacu_', 'bulkseme_oar_') as $bulkseme_t) {
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- uninstall clean-up by prefix.
+        $wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s", $wpdb->esc_like('_transient_' . $bulkseme_t) . '%', $wpdb->esc_like('_transient_timeout_' . $bulkseme_t) . '%'));
+    }
 }
 
 if (is_multisite()) {

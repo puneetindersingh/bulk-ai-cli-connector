@@ -194,6 +194,11 @@ function bulkseme_oauth_redirect_allowed($uri) {
     if (preg_match('/[\x00-\x20"\'<>\\\\`%@]/', $uri)) {
         return false;
     }
+    // The address as a browser reads it: http(s)://, then exactly localhost, 127.0.0.1 or [::1], an
+    // optional numeric port, then a path or query or nothing.
+    if (!preg_match('#^https?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]{1,5})?([/?][^\#]*)?$#Di', $uri)) {
+        return false;
+    }
     $p = wp_parse_url($uri);
     if (!is_array($p) || empty($p['scheme']) || empty($p['host']) || isset($p['fragment']) || isset($p['user']) || isset($p['pass'])) {
         return false;
@@ -253,7 +258,8 @@ function bulkseme_oauth_b64url($bin) {
  * address, never stored, so a registration made elsewhere is not valid here.
  */
 function bulkseme_oauth_client_key() {
-    return hash_hmac('sha256', 'bulkseme-oauth-client|' . bulkseme_oauth_issuer(), wp_salt('auth'));
+    // The home address, not the issuer: changing permalinks must not make every app register again.
+    return hash_hmac('sha256', 'bulkseme-oauth-client|' . home_url(), wp_salt('auth'));
 }
 
 /**
@@ -401,16 +407,16 @@ function bulkseme_oauth_hash($secret) {
     return hash('sha256', (string) $secret);
 }
 
-/** Save one connection's data, and list it in the index if it is new. */
+/** Save one connection's data, and list it in the index if it is new. True when it reads back. */
 function bulkseme_oauth_save_grant($id, array $grant) {
     if (!bulkseme_oauth_is_grant_id($id) || bulkseme_oauth_is_revoked($id)) {
-        return;
+        return false;
     }
     update_option('bulkseme_oauth_g_' . $id, $grant, false);
     if (bulkseme_oauth_is_revoked($id)) {
         // Ended while this request was writing: take the row back out.
         delete_option('bulkseme_oauth_g_' . $id);
-        return;
+        return false;
     }
     wp_cache_delete('bulkseme_oauth_grants', 'options');
     $index = bulkseme_oauth_grant_index();
@@ -418,6 +424,11 @@ function bulkseme_oauth_save_grant($id, array $grant) {
         $index[$id] = isset($grant['created']) ? (int) $grant['created'] : time();
         update_option('bulkseme_oauth_grants', $index, false);
     }
+    // A failed write (a locked database, a lost race on the index) must not hand out dead tokens.
+    wp_cache_delete('bulkseme_oauth_grants', 'options');
+    wp_cache_delete('bulkseme_oauth_g_' . $id, 'options');
+    $back = bulkseme_oauth_grant($id);
+    return is_array($back) && isset($back['access']) && $back['access'] === $grant['access'];
 }
 
 /** Remove connections whose refresh token has expired. They can never sign in again. */
@@ -435,6 +446,21 @@ function bulkseme_oauth_prune() {
     }
     if (count($keep) !== count($index)) {
         update_option('bulkseme_oauth_grants', $keep, false);
+    }
+    // End markers older than the longest a refresh token lives are no longer needed: any row they
+    // guard has expired by then.
+    $revoked = bulkseme_oauth_revoked();
+    $left    = [];
+    foreach ($revoked as $rid => $t) {
+        if ((int) $t < time() - BULKSEME_OAUTH_REFRESH_TTL - DAY_IN_SECONDS && bulkseme_oauth_is_grant_id((string) $rid)) {
+            delete_option('bulkseme_oauth_rv_' . $rid);
+            delete_option('bulkseme_oauth_g_' . $rid);
+        } else {
+            $left[$rid] = $t;
+        }
+    }
+    if (count($left) !== count($revoked)) {
+        update_option('bulkseme_oauth_revoked', $left, false);
     }
     return $keep;
 }
@@ -506,8 +532,12 @@ function bulkseme_oauth_mint(array $grant, $id) {
     $random  = bin2hex(random_bytes(24));
     $refresh = 'bsmr_' . $id . '_' . sprintf('%08x', $gen) . '_' . $random . '_' . bulkseme_oauth_refresh_mac($id, $gen, $random);
     $now     = time();
-    $grant['prev']        = isset($grant['refresh']) && is_string($grant['refresh']) ? $grant['refresh'] : '';
-    $grant['retried']     = 0;
+    unset($grant['prev'], $grant['retried']);
+    // The access token this replaces stays good for two more minutes if it has not run out yet: an
+    // app that refreshes again a moment after another of its requests did must not cut that
+    // request's fresh token off. An expired one (the usual reason to refresh) stays expired.
+    $grant['access_prev']     = isset($grant['access']) && is_string($grant['access']) ? $grant['access'] : '';
+    $grant['access_prev_exp'] = min((int) (isset($grant['access_exp']) ? $grant['access_exp'] : 0), $now + 120);
     $grant['gen']         = $gen;
     $grant['rotated']     = $now;
     $grant['access']      = bulkseme_oauth_hash(substr($access, 18));
@@ -624,9 +654,15 @@ add_filter('determine_current_user', 'bulkseme_determine_user_by_oauth', 16);
 function bulkseme_oauth_sign_in($token) {
     list($id, $secret) = bulkseme_oauth_split($token, 'bsmo');
     $grant = bulkseme_oauth_grant($id);
-    if (!is_array($grant) || empty($grant['access']) || !is_string($grant['access'])
-        || (int) (isset($grant['access_exp']) ? $grant['access_exp'] : 0) < time()
-        || !hash_equals($grant['access'], bulkseme_oauth_hash($secret))) {
+    if (!is_array($grant)) {
+        return 0;
+    }
+    $hash    = bulkseme_oauth_hash($secret);
+    $current = !empty($grant['access']) && is_string($grant['access']) && hash_equals($grant['access'], $hash)
+        && (int) (isset($grant['access_exp']) ? $grant['access_exp'] : 0) >= time();
+    $before  = !empty($grant['access_prev']) && is_string($grant['access_prev']) && hash_equals($grant['access_prev'], $hash)
+        && (int) (isset($grant['access_prev_exp']) ? $grant['access_prev_exp'] : 0) >= time();
+    if (!$current && !$before) {
         return 0;
     }
     $user = bulkseme_oauth_grant_user($id, $grant);
@@ -807,6 +843,10 @@ function bulkseme_oauth_token_from_code(WP_REST_Request $req, $client_id, array 
     $ctx = get_transient($key);
     // Only the request that deletes the code may use it, so two at once cannot both get tokens.
     if (!is_array($ctx) || !delete_transient($key)) {
+        $made = get_transient('bulkseme_oacu_' . bulkseme_oauth_hash($code));
+        if (is_string($made) && bulkseme_oauth_is_grant_id($made)) {
+            bulkseme_oauth_revoke($made);
+        }
         return bulkseme_oauth_error('invalid_grant', 'The code is not valid, has expired or was already used.');
     }
     foreach (['client_id', 'redirect_uri', 'challenge', 'user_login', 'user_registered'] as $field) {
@@ -835,6 +875,9 @@ function bulkseme_oauth_token_from_code(WP_REST_Request $req, $client_id, array 
     do {
         $id = bin2hex(random_bytes(6));
     } while (isset($grants[$id]) || bulkseme_oauth_is_revoked($id) || bulkseme_oauth_grant($id) !== null);
+    // Remember which connection this code makes before making it: if the code is ever presented
+    // again, someone else has it, and the connection ends (OAuth 2.1 4.1.3).
+    set_transient('bulkseme_oacu_' . bulkseme_oauth_hash($code), $id, BULKSEME_OAUTH_CODE_TTL * 5);
     list($grant, $body) = bulkseme_oauth_mint([
         'client_id'       => $client_id,
         'app'             => bulkseme_oauth_app_label($ctx['redirect_uri']),
@@ -845,8 +888,65 @@ function bulkseme_oauth_token_from_code(WP_REST_Request $req, $client_id, array 
         'pw'              => bulkseme_oauth_pw_mark($user),
         'created'         => time(),
     ], $id);
-    bulkseme_oauth_save_grant($id, $grant);
+    if (!bulkseme_oauth_save_grant($id, $grant)) {
+        return bulkseme_oauth_error('temporarily_unavailable', 'The site could not save the connection. Try connecting again.', 503);
+    }
     return bulkseme_oauth_json($body);
+}
+
+/**
+ * The answer to a refresh, kept for 30 seconds under the hash of the refresh
+ * token that was used, and encrypted with a key made from that token: only
+ * whoever holds the token can read it, and a copy of the database cannot.
+ * Apps often refresh several times at once when the access token runs out
+ * (one refresh per waiting request), or retry when an answer is lost; within
+ * the 30 seconds they all get this same answer instead of the connection ending.
+ */
+function bulkseme_oauth_remember_answer($token, array $body) {
+    $key   = hash('sha256', 'bulkseme-oauth-answer|' . $token, true);
+    $nonce = random_bytes(24);
+    $box   = sodium_crypto_secretbox((string) wp_json_encode($body), $nonce, $key);
+    // Parallel requests are waiting for this; a busy database can refuse one write, so try again.
+    for ($i = 0; $i < 3; $i++) {
+        if (set_transient('bulkseme_oar_' . bulkseme_oauth_hash($token), bin2hex($nonce . $box), 30)) {
+            return;
+        }
+        usleep(50000);
+    }
+}
+
+/** The remembered answer for this refresh token, or null. */
+function bulkseme_oauth_recall_answer($token) {
+    $hex = get_transient('bulkseme_oar_' . bulkseme_oauth_hash($token));
+    if (!is_string($hex) || !preg_match('/^[0-9a-f]+$/D', $hex) || strlen($hex) < 2 * 40) {
+        return null;
+    }
+    $raw   = hex2bin($hex);
+    $key   = hash('sha256', 'bulkseme-oauth-answer|' . $token, true);
+    $plain = sodium_crypto_secretbox_open(substr($raw, 24), substr($raw, 0, 24), $key);
+    $body  = is_string($plain) ? json_decode($plain, true) : null;
+    return is_array($body) && isset($body['access_token'], $body['refresh_token']) ? $body : null;
+}
+
+/** Wait up to two seconds for another request's remembered answer to this refresh token. */
+function bulkseme_oauth_await_answer($token) {
+    for ($i = 0; $i < 20; $i++) {
+        $same = bulkseme_oauth_recall_answer($token);
+        if ($same !== null) {
+            return $same;
+        }
+        usleep(100000);
+        if (!wp_using_ext_object_cache()) {
+            // Transients live in the options table here: read it again, not this request's memory
+            // of "no such option". (With Redis or Memcached the transient IS the cache entry, so
+            // nothing may be deleted: that would delete the answer itself.)
+            $name = 'bulkseme_oar_' . bulkseme_oauth_hash($token);
+            wp_cache_delete('_transient_' . $name, 'options');
+            wp_cache_delete('_transient_timeout_' . $name, 'options');
+            wp_cache_delete('notoptions', 'options');
+        }
+    }
+    return null;
 }
 
 function bulkseme_oauth_token_from_refresh(WP_REST_Request $req, $client_id) {
@@ -864,39 +964,40 @@ function bulkseme_oauth_token_from_refresh(WP_REST_Request $req, $client_id) {
     }
     $hash    = bulkseme_oauth_hash($token);
     $current = isset($grant['gen']) ? (int) $grant['gen'] : 0;
-    $is      = function ($field) use ($grant, $hash) {
-        return !empty($grant[$field]) && is_string($grant[$field]) && hash_equals($grant[$field], $hash);
-    };
-    if ($gen === $current && $is('refresh')) {
-        if ((int) (isset($grant['refresh_exp']) ? $grant['refresh_exp'] : 0) < time()) {
-            return bulkseme_oauth_error('invalid_grant', 'The refresh token has expired. Connect again.');
+
+    if ($gen === $current - 1 && time() - (int) (isset($grant['rotated']) ? $grant['rotated'] : 0) <= 30) {
+        // Replaced within the last 30 seconds and its successor not used yet: a parallel or retried
+        // request. It gets the same answer as the first one (which may still be being written). If
+        // that answer is missing (the first request died before saving it), refuse without ending
+        // the connection: nothing is handed out, so a thief gains nothing either.
+        $same = bulkseme_oauth_await_answer($token);
+        if ($same !== null) {
+            return bulkseme_oauth_json($same);
         }
-    } elseif ($gen === $current - 1 && empty($grant['retried']) && $is('prev') && time() - (int) (isset($grant['rotated']) ? $grant['rotated'] : 0) <= 60) {
-        // The previous token within a minute of being replaced: the app did not get the last answer
-        // and is retrying. It gets new tokens; the ones it never received are replaced. Once only: the
-        // retry keeps the same "previous" token and the same minute, so the never-received token is
-        // now an earlier generation. (A deliberate, short exception to strict rotation; a thief using
-        // it is caught at the app's next refresh.)
-        $retry = true;
-    } elseif ($gen < $current) {
-        // A genuine earlier generation came back: two parties hold this connection's refresh tokens.
-        // OAuth 2.1 4.3.1: end it.
+        return bulkseme_oauth_error('temporarily_unavailable', 'A refresh with this token is still being finished. Try again in a moment.', 503);
+    }
+    if ($gen < $current) {
+        // A genuine earlier generation came back after its minute, or after its successor was used:
+        // two parties hold this connection's refresh tokens. OAuth 2.1 4.3.1: end it.
         bulkseme_oauth_revoke($id);
         return bulkseme_oauth_error('invalid_grant', 'This refresh token was already used, so the connection was ended. Connect again.');
-    } else {
+    }
+    if ($gen !== $current || empty($grant['refresh']) || !is_string($grant['refresh']) || !hash_equals($grant['refresh'], $hash)) {
         return bulkseme_oauth_error('invalid_grant', 'The refresh token is not valid.');
     }
+    if ((int) (isset($grant['refresh_exp']) ? $grant['refresh_exp'] : 0) < time()) {
+        return bulkseme_oauth_error('invalid_grant', 'The refresh token has expired. Connect again.');
+    }
     list($new, $body) = bulkseme_oauth_mint($grant, $id);
-    if (!empty($retry)) {
-        $new['prev']    = $grant['prev'];
-        $new['rotated'] = isset($grant['rotated']) ? (int) $grant['rotated'] : 0;
-        $new['retried'] = 1;
-    }
     if (!bulkseme_oauth_swap_grant($id, $row[0], $new)) {
-        // Another request rotated this connection at the same moment with the same token: reuse.
-        bulkseme_oauth_revoke($id);
-        return bulkseme_oauth_error('invalid_grant', 'This refresh token was used twice at once, so the connection was ended. Connect again.');
+        // Another request rotated with this same token a moment ago: wait briefly for its answer.
+        $same = bulkseme_oauth_await_answer($token);
+        if ($same !== null) {
+            return bulkseme_oauth_json($same);
+        }
+        return bulkseme_oauth_error('temporarily_unavailable', 'Another refresh with this token is still running. Try again in a moment.', 503);
     }
+    bulkseme_oauth_remember_answer($token, $body);
     if (bulkseme_oauth_is_revoked($id)) {
         return bulkseme_oauth_error('invalid_grant', 'The connection was ended.');
     }
@@ -984,14 +1085,14 @@ function bulkseme_oauth_back($redirect_uri, array $params) {
 
 /** A page that says something went wrong, without sending the browser anywhere. */
 function bulkseme_oauth_stop($message) {
-    bulkseme_oauth_page_open(__('Could not connect', 'bulk-seo-meta-editor-for-ai-agents'));
+    bulkseme_oauth_page_open(__('Could not connect', 'bulk-seo-meta-editor-for-ai-agents'), 400);
     echo '<h1>' . esc_html__('Could not connect', 'bulk-seo-meta-editor-for-ai-agents') . '</h1><p>' . esc_html($message) . '</p>';
     bulkseme_oauth_page_close();
     exit;
 }
 
-function bulkseme_oauth_page_open($title) {
-    status_header(200);
+function bulkseme_oauth_page_open($title, $status = 200) {
+    status_header((int) $status);
     nocache_headers();
     header('Content-Type: text/html; charset=utf-8');
     // This page hands out access on one click, so it can never be shown inside another site's frame.
@@ -1020,7 +1121,9 @@ function bulkseme_oauth_page_close() {
  */
 function bulkseme_oauth_authorize_page($method) {
     if (!bulkseme_oauth_enabled()) {
-        bulkseme_oauth_stop(__('One-click sign-in is switched off on this site. An administrator can switch it on under Settings > AI CLI Connector.', 'bulk-seo-meta-editor-for-ai-agents'));
+        bulkseme_oauth_stop(bulkseme_connection_is_secure()
+            ? __('One-click sign-in is switched off on this site. An administrator can switch it on under Settings > AI CLI Connector.', 'bulk-seo-meta-editor-for-ai-agents')
+            : __('One-click sign-in needs this site to be served over HTTPS.', 'bulk-seo-meta-editor-for-ai-agents'));
     }
     // phpcs:ignore WordPress.Security.NonceVerification -- the nonce is checked below before anything is approved.
     $src = $method === 'POST' ? $_POST : $_GET;
@@ -1103,6 +1206,11 @@ function bulkseme_oauth_authorize_page($method) {
         bulkseme_oauth_back($redirect, ['code' => $code] + $back);
     }
 
+    // At the most connections a site keeps, say so here rather than after the Allow click.
+    if (count(bulkseme_oauth_prune()) >= BULKSEME_OAUTH_MAX_GRANTS) {
+        bulkseme_oauth_stop(__('This site already has the most connected apps it can keep. Disconnect one under Settings > AI CLI Connector, then connect again.', 'bulk-seo-meta-editor-for-ai-agents'));
+    }
+
     // Without its anti-framing headers this page could be clicked through from inside another site's
     // frame. When something has already printed output, the headers can no longer be sent: refuse.
     if (headers_sent()) {
@@ -1139,6 +1247,22 @@ function bulkseme_oauth_authorize_page($method) {
     bulkseme_oauth_page_close();
     exit;
 }
+
+/** End every connection of an account that may no longer approve them. */
+function bulkseme_oauth_end_if_not_approver($user_id) {
+    $user = get_userdata((int) $user_id);
+    if ($user && bulkseme_oauth_can_approve($user)) {
+        return;
+    }
+    foreach (bulkseme_oauth_grants() as $id => $g) {
+        if (is_array($g) && (int) (isset($g['user_id']) ? $g['user_id'] : 0) === (int) $user_id) {
+            bulkseme_oauth_revoke((string) $id);
+        }
+    }
+}
+// A demoted account's connections end; promoting it again does not bring them back.
+add_action('set_user_role', 'bulkseme_oauth_end_if_not_approver');
+add_action('remove_user_role', 'bulkseme_oauth_end_if_not_approver');
 
 // A deleted account's connections end with it.
 add_action('deleted_user', function ($user_id) {

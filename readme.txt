@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.6.0
+Stable tag: 2.6.1
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -280,6 +280,12 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.6.1 =
+* One-click sign-in keeps working when an AI app refreshes several times at once after its hourly token expiry, or retries after a lost answer: within 30 seconds they all get the same answer.
+* Demoting an administrator ends their connected apps; reusing a sign-in code ends the connection it made; a failed save asks the app to try again instead of handing out tokens that never work.
+* The approval page says when the site already holds the most connected apps, and when the site needs HTTPS. Error pages answer with status 400.
+* Stricter localhost return addresses, connections survive a permalink change, old end markers are cleared after a month, and uninstall removes every sign-in leftover.
+
 = 2.6.0 =
 * **One-click sign-in for claude.ai, the Claude desktop app and ChatGPT.** Add the MCP address as a custom connector, click Allow on your site, done. No key to copy.
 * OAuth 2.1: authorization code with PKCE (S256), dynamic client registration, discovery documents, rotating refresh tokens. Only administrators approve, in their browser, and only Claude, ChatGPT, Cursor and apps on the same computer can ask. A password change ends that account's connections.
@@ -370,6 +376,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Earlier releases: Yoast and Rank Math field mapping, bulk and CSV routes, term and archive SEO, image alt text, custom schema, post titles and sitemap flushing. Full notes are in the GitHub repository's release history.
 
 == Upgrade Notice ==
+
+= 2.6.1 =
+One-click sign-in no longer drops a connection when an AI app refreshes several times at once.
 
 = 2.6.0 =
 claude.ai, the Claude desktop app and ChatGPT can now connect with one click: add the MCP address as a custom connector and click Allow. Keys keep working.
