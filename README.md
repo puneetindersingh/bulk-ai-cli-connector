@@ -10,37 +10,22 @@ Formerly Bulk SEO Meta Editor for AI Agents. Same plugin, same WordPress.org add
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-FF7F50)](LICENSE)
 [![npm](https://img.shields.io/npm/v/bulk-seo-meta-editor-mcp?logo=npm&color=FF7F50&label=MCP%20server)](https://www.npmjs.com/package/bulk-seo-meta-editor-mcp)
 
-## Testing now: one-click sign-in for claude.ai and ChatGPT (2.6.1)
+## New in 2.6: one-click sign-in for claude.ai and ChatGPT
 
-Version 2.6.1 lets claude.ai, the Claude desktop app and ChatGPT connect to a site with no key: add the site's MCP address as a custom connector, then click Allow on a page your site shows you. It is **in testing**. WordPress.org still installs and updates to 2.5.0 until testing is done.
+claude.ai, the Claude desktop app and ChatGPT connect with no key: open Settings > AI CLI Connector, copy the address from the "no key needed" box, add it as a custom connector in your AI app, and click Allow on the page your site shows you. The site must be public and on HTTPS. Claude Code, Cursor and API keys work as before.
 
-**Please test it on a staging or test site, not a live one.** The site must be public and served over HTTPS, because claude.ai and ChatGPT connect from the internet.
+1. In Claude: Settings > Connectors > Add custom connector, and paste the address. In ChatGPT: Settings > Apps, switch on developer mode, then create an app with the address and OAuth sign-in. (The apps' menu names change from time to time.)
+2. Sign in on the page your site opens and click Allow. Then ask the AI to call `get_status`.
 
-How to try it:
-
-1. Download 2.6.1: the [pre-release on GitHub](https://github.com/puneetindersingh/bulk-ai-cli-connector/releases/tag/v2.6.1-beta), or the Development Version on the plugin's [Advanced page](https://wordpress.org/plugins/bulk-seo-meta-editor-for-ai-agents/advanced/) on WordPress.org.
-2. Install it over the current version: Plugins > Add New > Upload Plugin, then Replace current with uploaded.
-3. Open Settings > AI CLI Connector and copy the address from the "no key needed" box.
-4. In Claude: Settings > Connectors > Add custom connector, and paste the address. In ChatGPT: Settings > Apps, switch on developer mode, then create an app with the address and OAuth sign-in. (The apps' menu names change from time to time.)
-5. Sign in on the page your site opens and click Allow. Then ask the AI to call `get_status`.
-
-What helps most in a report:
-
-- which app you used (claude.ai, Claude desktop, ChatGPT, Cursor or another) and whether it connected;
-- whether it is still connected after an hour or more, when the app has to refresh its token;
-- anything that broke: the exact error text, your WordPress and PHP versions, your host, and any caching or security plugin on the site.
-
-Report it in [Issues](https://github.com/puneetindersingh/bulk-ai-cli-connector/issues).
-
-**Found a security problem? Do not open a public issue.** Report it privately: [Report a vulnerability](https://github.com/puneetindersingh/bulk-ai-cli-connector/security/advisories/new).
-
-What it is meant to guarantee, so you know what to try to break:
+What it guarantees:
 
 - Only an administrator can approve an app, signed in to the site in their own browser. An application password or API key cannot.
 - An approval can only go back to Claude's or ChatGPT's own callback address, Cursor's, or an app on the same computer (localhost).
 - A token works on the MCP endpoint only, never on other REST routes, wp-admin or the login screen, and only through this plugin's tools.
 - Disconnect, a password change, losing the administrator role, deleting the account or switching the feature off ends a connection at once.
 - Refresh tokens change on every use; an old one used again ends the connection. Nothing in the database can be turned into a working token.
+
+Problems: [Issues](https://github.com/puneetindersingh/bulk-ai-cli-connector/issues). **Security problems: please report them privately with [Report a vulnerability](https://github.com/puneetindersingh/bulk-ai-cli-connector/security/advisories/new), never in a public issue.**
 
 **Connect Claude, ChatGPT and MCP agents to WordPress.** A free, GPL-2.0 WordPress plugin that lets AI agents,
 command-line tools and your own scripts read and rewrite SEO titles, meta descriptions, JSON-LD schema, redirects,
