@@ -114,6 +114,42 @@
 		} );
 	}
 
+	// The MCP address for one-click sign-in. It holds no secret, so copying it clears nothing.
+	Array.prototype.forEach.call( document.querySelectorAll( '.bulkseme-copy-url' ), function ( button ) {
+		var input = button.parentNode.querySelector( '.bulkseme-url' );
+		if ( ! input ) {
+			return;
+		}
+		input.addEventListener( 'click', function () {
+			input.select();
+		} );
+		button.addEventListener( 'click', function () {
+			var ok = function () {
+				button.textContent = text.copied || 'Copied';
+			};
+			if ( navigator.clipboard && navigator.clipboard.writeText ) {
+				navigator.clipboard.writeText( input.value ).then( ok, function () {
+					input.select();
+				} );
+			} else {
+				input.select();
+				try {
+					if ( document.execCommand( 'copy' ) ) {
+						ok();
+					}
+				} catch ( e ) {}
+			}
+		} );
+	} );
+
+	Array.prototype.forEach.call( document.querySelectorAll( '.bulkseme-disconnect-form' ), function ( form ) {
+		form.addEventListener( 'submit', function ( event ) {
+			if ( ! window.confirm( text.confirmDisconnect || 'Disconnect this app?' ) ) {
+				event.preventDefault();
+			}
+		} );
+	} );
+
 	Array.prototype.forEach.call( document.querySelectorAll( '.bulkseme-revoke-form' ), function ( form ) {
 		form.addEventListener( 'submit', function ( event ) {
 			if ( ! window.confirm( text.confirm || 'Revoke this key?' ) ) {

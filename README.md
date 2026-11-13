@@ -273,9 +273,17 @@ Cursor, VS Code and other clients that take an MCP settings file:
 
 Tools: `get_status`, `export_seo`, `update_seo`, `get_schema`, `update_image_alts`, `read_content`, `edit_content`, `replace_text`, `list_backups`, `undo_content_change`, `clone_page`, `list_redirects`, `save_redirect`, `delete_redirect`, `flush_sitemaps`.
 
-How it works: `POST /wp-json/seo-meta-bridge/v1/mcp`, JSON-RPC 2.0 over Streamable HTTP, one JSON answer per request (no event stream, no session; GET and DELETE answer 405). It signs nobody in by itself: the request needs an API key (`Authorization: Bearer`, `X-Bulkseme-Key` or Basic auth), an application password, or a browser session with a REST nonce, and the user needs `edit_posts`. Each tool runs one of the plugin's own routes inside the same request, so every route's argument and capability checks apply unchanged, and a default-scope key stays inside the plugin's routes. Requests with an `Origin` header from another site are refused. Security plugins or firewall rules that match on the REST path only see `/mcp`; the inner route's own checks still run.
+How it works: `POST /wp-json/seo-meta-bridge/v1/mcp`, JSON-RPC 2.0 over Streamable HTTP, one JSON answer per request (no event stream, no session; GET and DELETE answer 405). It signs nobody in by itself: the request needs a one-click sign-in token, an API key (`Authorization: Bearer`, `X-Bulkseme-Key` or Basic auth), an application password, or a browser session with a REST nonce, and the user needs `edit_posts`. Each tool runs one of the plugin's own routes inside the same request, so every route's argument and capability checks apply unchanged, and a default-scope key stays inside the plugin's routes. Requests with an `Origin` header from another site are refused. Security plugins or firewall rules that match on the REST path only see `/mcp`; the inner route's own checks still run.
 
-claude.ai and the ChatGPT app add remote servers through an OAuth sign-in, which this version does not offer.
+### One-click sign-in for claude.ai and ChatGPT (2.6.0+)
+
+claude.ai, the Claude desktop app and ChatGPT add the same MCP address as a custom connector, with no key. The app finds the sign-in server from the 401 answer, registers itself, and opens an approval page on the site; an administrator clicks Allow.
+
+- OAuth 2.1 authorization code flow with PKCE (S256 only), public clients only, dynamic client registration (RFC 7591), protected resource metadata (RFC 9728) at `/wp-json/seo-meta-bridge/v1/oauth/protected-resource`, authorization server metadata (RFC 8414 and the OpenID form) for the issuer `/wp-json/seo-meta-bridge/v1/oauth`, both appended to it and path-inserted under the domain root's `/.well-known/`, resource indicators (RFC 8707) and `iss` on the redirect (RFC 9207).
+- Return addresses, matched exactly: `https://claude.ai/api/mcp/auth_callback`, `https://claude.com/api/mcp/auth_callback`, `https://chatgpt.com/connector_platform_oauth_redirect`, Cursor's own callback, and localhost on any port. Filter `bulkseme_oauth_redirect_uris` (address => name) adds more. Registration stores nothing: the client_id is signed with the site's salt.
+- Who approves: users with `manage_options` (filter `bulkseme_oauth_can_approve`), signed in with their browser's login cookie. The token acts as that user; a password change ends that user's connections.
+- Tokens: access 1 hour, refresh 30 days and rotated on every use, codes 2 minutes and single use. Access tokens and codes are stored as SHA-256 hashes; refresh tokens carry a generation signed with the site's salt, and any earlier generation that comes back ends the connection.
+- A token signs in on `/mcp` only. Connections are listed under Settings > AI CLI Connector > Connected apps; the feature can be switched off there or with the `bulkseme_oauth_enabled` filter. HTTPS required (or a local development site).
 
 ## Bundled npm MCP server (older setup)
 

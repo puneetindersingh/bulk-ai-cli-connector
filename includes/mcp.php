@@ -9,8 +9,9 @@
  *
  * How it is kept safe:
  *   - It signs nobody in by itself. The request must already be signed in by
- *     the plugin's API key, an application password or a browser session with
- *     a REST nonce, and the user must be able to edit posts.
+ *     the plugin's API key, a one-click sign-in token (includes/oauth.php), an
+ *     application password or a browser session with a REST nonce, and the
+ *     user must be able to edit posts.
  *   - Every tool runs one of the plugin's own REST routes inside the same
  *     request, through rest_do_request(). Each route's own argument checks and
  *     capability checks run exactly as they do over HTTP. The endpoint adds no
@@ -187,8 +188,8 @@ function bulkseme_mcp_origin_allowed(WP_REST_Request $req) {
  * is cleaned, cut short and only ever printed escaped.
  */
 function bulkseme_mcp_note_use($client = null) {
-    // Only an API key counts as "your AI connected": the keys are made by administrators on the
-    // setup screen, so another account cannot turn that screen green.
+    // Only an API key or a one-click connection counts as "your AI connected": both are made by
+    // administrators, so another account cannot turn that screen green.
     if (!bulkseme_key_auth_user()) {
         return;
     }
@@ -223,7 +224,7 @@ function bulkseme_mcp_note_use($client = null) {
     }
     $seen['time'] = $now;
     $seen['user'] = $who;
-    $seen['via']  = 'key';
+    $seen['via']  = bulkseme_oauth_auth_grant() !== '' ? 'oauth' : 'key';
     update_option('bulkseme_mcp_seen', $seen, false);
 }
 
@@ -378,7 +379,7 @@ add_action('rest_api_init', function () {
                     return new WP_Error('bulkseme_mcp_origin', 'Requests from another site are not accepted.', ['status' => 403]);
                 }
                 if (!is_user_logged_in()) {
-                    return new WP_Error('rest_not_logged_in', 'Sign in with an API key (X-Bulkseme-Key or Authorization: Bearer), or an application password.', ['status' => 401]);
+                    return new WP_Error('rest_not_logged_in', 'Sign in with one-click sign-in (OAuth), an API key (X-Bulkseme-Key or Authorization: Bearer), or an application password.', ['status' => 401]);
                 }
                 return current_user_can('edit_posts');
             },

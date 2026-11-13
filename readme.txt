@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.5.0
+Stable tag: 2.6.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -22,7 +22,7 @@ New in 2.3: an SEO item in the admin bar on every page you can edit. It opens a 
 
 = What you can do with it =
 
-* **Connect Claude or ChatGPT to WordPress**: The plugin is its own MCP server: Claude Code, Cursor, VS Code and other MCP clients add one address and a key, with nothing to install on the computer. Agents that do not speak MCP call the REST routes directly. Anything else that can send an authenticated HTTP request works the same way, including n8n, Zapier and Make.
+* **Connect Claude or ChatGPT to WordPress**: The plugin is its own MCP server. claude.ai, the Claude desktop app and ChatGPT add it as a custom connector with one address and an Allow click on your site. Claude Code, Cursor, VS Code and other MCP clients add the same address with a key. Nothing to install on the computer. Agents that do not speak MCP call the REST routes directly. Anything else that can send an authenticated HTTP request works the same way, including n8n, Zapier and Make.
 * **Bulk edit Yoast SEO and Rank Math meta**: SEO titles, meta descriptions, focus keywords, canonical URLs, robots directives, Open Graph and Twitter fields on up to 100 posts, pages, products or term archives in one call. Works on the free editions.
 * **Edit Elementor and Beaver Builder pages with an AI agent**: read the headings, paragraphs, button labels and list items of a page as a list, change only the ones you name, and leave the layout exactly as it was. SiteOrigin Page Builder, Advanced Custom Fields text fields, Gutenberg, the classic editor, Divi and WPBakery pages are covered too.
 * **Add JSON-LD schema**: FAQPage, HowTo, Service or any other type, per post or per category, merged into the Yoast or Rank Math schema graph.
@@ -118,9 +118,12 @@ Plus robots, OG/Twitter description fields, and Rank Math primary-taxonomy keys.
 
 = MCP server built in =
 
-The plugin answers MCP requests itself at `/wp-json/seo-meta-bridge/v1/mcp` (Streamable HTTP). Make a key on **Settings > AI CLI Connector** and copy the ready setup for Claude Code, for Cursor and VS Code, or a message for any other AI tool. Nothing to install on your computer.
+The plugin answers MCP requests itself at `/wp-json/seo-meta-bridge/v1/mcp` (Streamable HTTP). Nothing to install on your computer.
 
-It has 15 tools: site status, SEO export and bulk update, stored schema, image alt text, read and edit page content, find and replace, content backups and undo, page copies, redirects and sitemap rebuilds. Each tool runs one of the plugin's own REST routes with the same permission checks, so a key limited to this plugin stays limited. claude.ai and the ChatGPT app add remote servers through a sign-in screen that this version does not offer yet.
+* **claude.ai, the Claude desktop app, ChatGPT:** add a custom connector with that address. The app opens a page on your site; sign in as an administrator and click Allow. This is OAuth 2.1 with PKCE, and the site must be public and on HTTPS.
+* **Claude Code, Cursor, VS Code and others:** make a key on **Settings > AI CLI Connector** and copy the ready setup, or a message for any other AI tool.
+
+It has 15 tools: site status, SEO export and bulk update, stored schema, image alt text, read and edit page content, find and replace, content backups and undo, page copies, redirects and sitemap rebuilds. Each tool runs one of the plugin's own REST routes with the same permission checks, so a key limited to this plugin stays limited. A one-click connection works on the MCP server only, never on other REST routes, and is listed under Connected apps with a Disconnect button.
 
 The older Node.js MCP server (`bulk-seo-meta-editor-mcp` on npm) still works for Claude Desktop.
 
@@ -151,7 +154,7 @@ MCP clients (Claude Code, Cursor, VS Code): use the setup the settings screen gi
 
 = How do I connect Claude or ChatGPT to WordPress? =
 
-Install and activate the plugin, then open **Settings > AI CLI Connector** (or click **Settings** under the plugin's name on the Plugins screen), make a key and copy the setup for your agent. An Application Password under **Users > Your Profile** works too where the host allows it. Claude Code, Cursor and VS Code connect to the plugin's built-in MCP server with the setup the screen gives you. Other agents call the REST routes under `/wp-json/seo-meta-bridge/v1/` directly. ChatGPT and other tools work wherever they can send an authenticated HTTPS request. Start with `GET /status`, which reports the active SEO plugin and the fields available.
+Install and activate the plugin, then open **Settings > AI CLI Connector** (or click **Settings** under the plugin's name on the Plugins screen), and either copy the MCP address into claude.ai or ChatGPT as a custom connector, or make a key and copy the setup for your agent. An Application Password under **Users > Your Profile** works too where the host allows it. Claude Code, Cursor and VS Code connect to the plugin's built-in MCP server with the setup the screen gives you. Other agents call the REST routes under `/wp-json/seo-meta-bridge/v1/` directly. ChatGPT and other tools work wherever they can send an authenticated HTTPS request. Start with `GET /status`, which reports the active SEO plugin and the fields available.
 
 = Is this an MCP server for WordPress? =
 
@@ -277,6 +280,12 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.6.0 =
+* **One-click sign-in for claude.ai, the Claude desktop app and ChatGPT.** Add the MCP address as a custom connector, click Allow on your site, done. No key to copy.
+* OAuth 2.1: authorization code with PKCE (S256), dynamic client registration, discovery documents, rotating refresh tokens. Only administrators approve, in their browser, and only Claude, ChatGPT, Cursor and apps on the same computer can ask. A password change ends that account's connections.
+* A connection works on the MCP server only. Settings > AI CLI Connector lists connected apps with a Disconnect button and can switch the feature off.
+* `/status` reports `supports_oauth`.
+
 = 2.5.0 =
 * **MCP server built in.** The plugin answers MCP requests at `/wp-json/seo-meta-bridge/v1/mcp`, so Claude Code, Cursor, VS Code and other MCP clients connect with one address and a key, with nothing to install. 15 tools, each running one of the plugin's own routes with the same permission checks.
 * API keys are also accepted as `Authorization: Bearer`, the form MCP clients send.
@@ -361,6 +370,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Earlier releases: Yoast and Rank Math field mapping, bulk and CSV routes, term and archive SEO, image alt text, custom schema, post titles and sitemap flushing. Full notes are in the GitHub repository's release history.
 
 == Upgrade Notice ==
+
+= 2.6.0 =
+claude.ai, the Claude desktop app and ChatGPT can now connect with one click: add the MCP address as a custom connector and click Allow. Keys keep working.
 
 = 2.5.0 =
 The plugin is now an MCP server itself: Claude Code, Cursor and VS Code connect with one address and a key. Existing keys keep working.

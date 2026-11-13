@@ -113,6 +113,7 @@ add_action('admin_enqueue_scripts', function ($hook_suffix) {
         'cleared' => __('Copied. Now paste it into your AI tool and send it. For safety the key is no longer shown here; if you need it again, make a new key.', 'bulk-seo-meta-editor-for-ai-agents'),
         'manual'  => __('Copy did not work. Press Ctrl+C (Cmd+C on a Mac) to copy', 'bulk-seo-meta-editor-for-ai-agents'),
         'confirm' => __('Revoke this key? Anything that uses it stops working at once.', 'bulk-seo-meta-editor-for-ai-agents'),
+        'confirmDisconnect' => __('Disconnect this app? It stops working at once. To use it again, connect it again from the app.', 'bulk-seo-meta-editor-for-ai-agents'),
         'mcpUrl'      => bulkseme_mcp_url(),
         'testing'     => __('Checking...', 'bulk-seo-meta-editor-for-ai-agents'),
         'testOk'      => __('Reachable. AI tools can reach this site; if yours still cannot connect, check the key.', 'bulk-seo-meta-editor-for-ai-agents'),
@@ -143,6 +144,19 @@ function bulkseme_handle_keys_screen_post() {
         } else {
             bulkseme_keys_screen_state(['new_key' => $key, 'scope' => $scope]);
         }
+    } elseif ($action === 'oauth_revoke') {
+        $id = isset($_POST['bulkseme_grant_id']) ? sanitize_key(wp_unslash($_POST['bulkseme_grant_id'])) : '';
+        if (bulkseme_oauth_revoke($id)) {
+            bulkseme_keys_screen_state(['notice' => __('Disconnected. That app can no longer use this site.', 'bulk-seo-meta-editor-for-ai-agents')]);
+        } else {
+            bulkseme_keys_screen_state(['error' => __('That connection no longer exists.', 'bulk-seo-meta-editor-for-ai-agents')]);
+        }
+    } elseif ($action === 'oauth_off') {
+        update_option('bulkseme_oauth_off', 1, false);
+        bulkseme_keys_screen_state(['notice' => __('One-click sign-in is off. Connected apps stop working until it is switched on again.', 'bulk-seo-meta-editor-for-ai-agents')]);
+    } elseif ($action === 'oauth_on') {
+        delete_option('bulkseme_oauth_off');
+        bulkseme_keys_screen_state(['notice' => __('One-click sign-in is on.', 'bulk-seo-meta-editor-for-ai-agents')]);
     } elseif ($action === 'revoke') {
         $id = isset($_POST['bulkseme_key_id']) ? sanitize_key(wp_unslash($_POST['bulkseme_key_id'])) : '';
         if (bulkseme_revoke_api_key($id)) {
@@ -166,7 +180,7 @@ function bulkseme_last_ai_use() {
     if (!empty($seen['client']) && is_string($seen['client'])) {
         $client = $seen['client'] . (!empty($seen['client_version']) && is_string($seen['client_version']) ? ' ' . $seen['client_version'] : '');
     }
-    foreach (bulkseme_keys_last_used() as $t) {
+    foreach (array_merge(array_values(bulkseme_keys_last_used()), array_values(bulkseme_oauth_last_used())) as $t) {
         if ((int) $t > $time) {
             $time   = (int) $t;
             $client = '';
@@ -258,6 +272,9 @@ function bulkseme_render_keys_screen() {
     $screen_url = bulkseme_setup_url();
     $last       = bulkseme_last_ai_use();
     $has_key    = (bool) $keys;
+    $grants     = bulkseme_oauth_grants();
+    $oauth_used = bulkseme_oauth_last_used();
+    $oauth_on   = bulkseme_oauth_enabled();
     $working    = apply_filters('bulkseme_api_key_auth_enabled', true) && bulkseme_connection_is_secure();
 
     $card = 'background:#fff;border:1px solid #c3c4c7;border-radius:4px;padding:6px 20px 14px;margin:16px 0;max-width:62em';
@@ -299,7 +316,11 @@ function bulkseme_render_keys_screen() {
     bulkseme_step_close();
 
     // 2. A key, or the setups for the key just made.
-    bulkseme_step_open($has_key, 2, __('Make a key for your AI tool', 'bulk-seo-meta-editor-for-ai-agents'));
+    bulkseme_step_open($has_key || $grants, 2, __('Connect your AI tool', 'bulk-seo-meta-editor-for-ai-agents'));
+    if ($state['new_key'] === '') {
+        bulkseme_render_oauth_box($oauth_on);
+        echo '<p style="margin-top:18px"><strong>' . esc_html__('Claude Code, Cursor, VS Code and other tools: make a key', 'bulk-seo-meta-editor-for-ai-agents') . '</strong></p>';
+    }
     if ($state['new_key'] !== '') {
         $setups = bulkseme_connection_setups($state['new_key'], $state['scope'], $user->user_login);
         $tabs   = [
@@ -328,7 +349,6 @@ function bulkseme_render_keys_screen() {
             echo '</div>';
             $first = false;
         }
-        echo '<p class="description">' . esc_html__('claude.ai and the ChatGPT app add sites through a sign-in screen that this version does not offer yet. Use one of the tools above.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
         echo '</div>';
     } else {
         if ($has_key) {
@@ -356,8 +376,8 @@ function bulkseme_render_keys_screen() {
     bulkseme_step_close();
 
     // 3. Add it to the AI tool.
-    bulkseme_step_open((bool) $last, 3, __('Add it to your AI tool', 'bulk-seo-meta-editor-for-ai-agents'));
-    echo '<p>' . esc_html__('After you make a key, this page gives you a ready setup for Claude Code, for Cursor and VS Code, and a message for any other AI tool. Nothing to install on your computer.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    bulkseme_step_open((bool) $last || (bool) $grants, 3, __('Add it to your AI tool', 'bulk-seo-meta-editor-for-ai-agents'));
+    echo '<p>' . esc_html__('With one-click sign-in, your AI app adds the site when you click Allow. With a key, this page gives you a ready setup for Claude Code, for Cursor and VS Code, and a message for any other AI tool. Nothing to install on your computer.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
     echo '<p>' . esc_html__('MCP server address:', 'bulk-seo-meta-editor-for-ai-agents') . ' <code>' . esc_html(bulkseme_mcp_url()) . '</code></p>';
     bulkseme_step_close();
 
@@ -373,7 +393,7 @@ function bulkseme_render_keys_screen() {
         }
         echo '</p>';
     } else {
-        echo '<p>' . esc_html__('Not yet. This turns green the first time your AI tool reaches the site with a key.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+        echo '<p>' . esc_html__('Not yet. This turns green the first time your AI tool uses the site.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
     }
     echo '<p><button type="button" class="button" id="bulkseme-test">' . esc_html__('Check the site can be reached', 'bulk-seo-meta-editor-for-ai-agents') . '</button> '
         . '<span id="bulkseme-test-result" role="status" style="margin-left:8px"></span></p>';
@@ -389,6 +409,9 @@ function bulkseme_render_keys_screen() {
     echo '<h2>' . esc_html__('Undo', 'bulk-seo-meta-editor-for-ai-agents') . '</h2>';
     echo '<p style="max-width:60em">' . esc_html__('Before your AI changes the text of a page or a category description, the old version is saved. The ten newest versions of each page are kept. To go back, ask your AI, for example: "Undo your last change to the About page."', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
     echo '</div>';
+
+    // One-click connections.
+    bulkseme_render_oauth_connections($grants, $oauth_used, $oauth_on, $screen_url, $card);
 
     // Keys.
     echo '<div style="' . esc_attr($card) . '">';
@@ -441,7 +464,7 @@ function bulkseme_render_keys_screen() {
     // Disconnecting.
     echo '<div style="' . esc_attr($card) . '">';
     echo '<h2>' . esc_html__('Disconnecting an AI tool', 'bulk-seo-meta-editor-for-ai-agents') . '</h2>';
-    echo '<p style="max-width:60em">' . esc_html__('Revoke its key in the table above. It stops working at once. Deactivating this plugin also stops every key, because only this plugin accepts them.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    echo '<p style="max-width:60em">' . esc_html__('Click Disconnect next to the app under Connected apps, or Revoke next to its key under Your keys. It stops working at once. Deactivating this plugin also stops every key and connected app, because only this plugin accepts them.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
     echo '<p style="max-width:60em">' . esc_html__('If you ever gave an AI tool an application password instead of a key, deactivating this plugin does not stop it: revoke it on your profile page.', 'bulk-seo-meta-editor-for-ai-agents')
         . ' <a href="' . esc_url(admin_url('profile.php#application-passwords-section')) . '">'
         . esc_html__('Open Application Passwords', 'bulk-seo-meta-editor-for-ai-agents') . '</a></p>';
@@ -451,8 +474,88 @@ function bulkseme_render_keys_screen() {
     echo '<p class="description">'
         . esc_html__('The MCP server answers JSON-RPC over POST (Streamable HTTP, no event stream). Send the key as Authorization: Bearer, in the X-Bulkseme-Key header, or as the password of HTTP Basic auth together with your username. An application password works on every route too.', 'bulk-seo-meta-editor-for-ai-agents')
         . '</p>';
+    echo '<p class="description">'
+        . esc_html__('One-click sign-in is OAuth 2.1: authorization code with PKCE (S256), dynamic client registration, public clients only. An unsigned request to the MCP server answers 401 with a WWW-Authenticate header that names the protected resource metadata:', 'bulk-seo-meta-editor-for-ai-agents')
+        . ' <code>' . esc_html(bulkseme_oauth_prm_url()) . '</code></p>';
     echo '<p><code>curl -H "X-Bulkseme-Key: bsme_..." ' . esc_html($status_url) . '</code></p>';
     echo '<p><code>curl -u "' . esc_html($user->user_login) . ':bsme_..." ' . esc_html($status_url) . '</code></p>';
     echo '</details>';
     echo '</div>';
+}
+
+/** The no-key way in: the MCP address for claude.ai, the Claude desktop app and ChatGPT. */
+function bulkseme_render_oauth_box($oauth_on) {
+    echo '<div style="background:#f0f6fc;border:1px solid #c5d9ed;border-radius:4px;padding:4px 16px 10px">';
+    echo '<p><strong>' . esc_html__('claude.ai, the Claude desktop app or ChatGPT: no key needed', 'bulk-seo-meta-editor-for-ai-agents') . '</strong></p>';
+    if (!$oauth_on) {
+        echo '<p>' . esc_html__('One-click sign-in is switched off on this site. Switch it on under Connected apps below, or use a key.', 'bulk-seo-meta-editor-for-ai-agents') . '</p></div>';
+        return;
+    }
+    echo '<p>' . esc_html__('Add a custom connector in your AI app and paste this address:', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    echo '<p style="display:flex;gap:6px;max-width:48em"><input type="text" readonly class="large-text code bulkseme-url" value="' . esc_attr(bulkseme_mcp_url()) . '">'
+        . '<button type="button" class="button bulkseme-copy-url">' . esc_html__('Copy', 'bulk-seo-meta-editor-for-ai-agents') . '</button></p>';
+    echo '<ul style="list-style:disc;padding-left:20px">';
+    echo '<li>' . esc_html__('Claude: Settings > Connectors > Add custom connector.', 'bulk-seo-meta-editor-for-ai-agents') . '</li>';
+    echo '<li>' . esc_html__('ChatGPT: Settings > Apps, switch on developer mode, then create an app with this address and OAuth sign-in.', 'bulk-seo-meta-editor-for-ai-agents') . '</li>';
+    echo '</ul>';
+    echo '<p>' . esc_html__('Your AI app then opens a page on this site. Sign in as an administrator, click Allow, and it is connected.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    $home = (string) wp_parse_url(home_url(), PHP_URL_HOST);
+    if (wp_parse_url(home_url(), PHP_URL_SCHEME) !== 'https' || bulkseme_oauth_is_loopback($home) || preg_match('/\.(local|test|localhost|invalid)$/i', $home)) {
+        echo '<p class="description">' . esc_html__('claude.ai and ChatGPT connect from the internet, so they can only reach a site that is public and served over HTTPS. This one does not look like it is.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    }
+    echo '</div>';
+}
+
+/** The apps connected through one-click sign-in, with Disconnect buttons, and the on/off switch. */
+function bulkseme_render_oauth_connections(array $grants, array $used, $oauth_on, $screen_url, $card) {
+    echo '<div style="' . esc_attr($card) . '">';
+    echo '<h2>' . esc_html__('Connected apps', 'bulk-seo-meta-editor-for-ai-agents') . '</h2>';
+    if (!$grants) {
+        echo '<p>' . esc_html__('No apps are connected through one-click sign-in.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    } else {
+        echo '<table class="widefat striped"><thead><tr>';
+        echo '<th>' . esc_html__('App', 'bulk-seo-meta-editor-for-ai-agents') . '</th>';
+        echo '<th>' . esc_html__('Acts as', 'bulk-seo-meta-editor-for-ai-agents') . '</th>';
+        echo '<th>' . esc_html__('Connected', 'bulk-seo-meta-editor-for-ai-agents') . '</th>';
+        echo '<th>' . esc_html__('Last used', 'bulk-seo-meta-editor-for-ai-agents') . '</th>';
+        echo '<th></th></tr></thead><tbody>';
+        foreach ($grants as $id => $g) {
+            if (!is_array($g)) {
+                continue;
+            }
+            $app = isset($g['app']) && is_string($g['app']) ? $g['app'] : '';
+            if (!empty($g['client_name']) && is_string($g['client_name']) && $g['client_name'] !== $app) {
+                $app .= ' (' . $g['client_name'] . ')';
+            }
+            if (!bulkseme_oauth_grant_user((string) $id, $g)) {
+                $app .= ' ' . __('(no longer works: the account, its password or its role changed)', 'bulk-seo-meta-editor-for-ai-agents');
+            }
+            echo '<tr>';
+            echo '<td>' . esc_html($app) . '</td>';
+            echo '<td>' . esc_html(isset($g['user_login']) && is_string($g['user_login']) ? $g['user_login'] : '') . '</td>';
+            echo '<td>' . esc_html(!empty($g['created']) ? gmdate('Y-m-d', (int) $g['created']) : '-') . '</td>';
+            echo '<td>' . esc_html(!empty($used[$id]) ? gmdate('Y-m-d H:i', (int) $used[$id]) . ' UTC' : __('never', 'bulk-seo-meta-editor-for-ai-agents')) . '</td>';
+            echo '<td><form method="post" action="' . esc_url($screen_url) . '" class="bulkseme-disconnect-form" style="margin:0">';
+            wp_nonce_field('bulkseme_keys');
+            echo '<input type="hidden" name="bulkseme_keys_action" value="oauth_revoke">';
+            echo '<input type="hidden" name="bulkseme_grant_id" value="' . esc_attr((string) $id) . '">';
+            echo '<button type="submit" class="button button-link-delete">' . esc_html__('Disconnect', 'bulk-seo-meta-editor-for-ai-agents') . '</button>';
+            echo '</form></td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+    echo '<form method="post" action="' . esc_url($screen_url) . '" style="margin-top:12px">';
+    wp_nonce_field('bulkseme_keys');
+    if (get_option('bulkseme_oauth_off')) {
+        echo '<input type="hidden" name="bulkseme_keys_action" value="oauth_on">';
+        echo '<p>' . esc_html__('One-click sign-in is off.', 'bulk-seo-meta-editor-for-ai-agents') . ' <button type="submit" class="button">' . esc_html__('Switch it on', 'bulk-seo-meta-editor-for-ai-agents') . '</button></p>';
+    } else {
+        echo '<input type="hidden" name="bulkseme_keys_action" value="oauth_off">';
+        echo '<p class="description">' . esc_html__('One-click sign-in is on. Only administrators can approve an app, and only Claude, ChatGPT, Cursor and apps on the same computer can ask.', 'bulk-seo-meta-editor-for-ai-agents')
+            . ' <button type="submit" class="button-link">' . esc_html__('Switch it off', 'bulk-seo-meta-editor-for-ai-agents') . '</button></p>';
+    }
+    if (!$oauth_on && !get_option('bulkseme_oauth_off')) {
+        echo '<p class="description">' . esc_html__('It is not working right now: the site is not served over HTTPS, or a filter switched it off.', 'bulk-seo-meta-editor-for-ai-agents') . '</p>';
+    }
+    echo '</form></div>';
 }
