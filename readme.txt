@@ -12,6 +12,8 @@ Connect Claude, ChatGPT and MCP agents to WordPress. Bulk edit SEO meta, schema,
 
 == Description ==
 
+**In testing: version 2.6 adds one-click sign-in for claude.ai, the Claude desktop app and ChatGPT** (no key to copy). It is not installed by updates yet. Testers on a staging site are welcome: see "How can I help test one-click sign-in" in the FAQ.
+
 Bulk AI CLI Connector connects AI agents and command-line tools to a WordPress site. Claude, Claude Code, ChatGPT, an MCP client or a plain script can read and rewrite SEO titles, meta descriptions, JSON-LD schema, redirects, image alt text and the visible copy of a page, in bulk, over an authenticated REST API. Every page content edit is backed up first and can be undone.
 
 There is no AI inside the plugin and it sends nothing anywhere: it makes no requests of its own to any service and needs no AI account. It gives the agent you already use a safe way into the site. Each call signs in as a WordPress user and can only do what that user could do in wp-admin.
@@ -152,6 +154,10 @@ MCP clients (Claude Code, Cursor, VS Code): use the setup the settings screen gi
 
 == Frequently Asked Questions ==
 
+= How can I help test one-click sign-in for claude.ai and ChatGPT? =
+
+Version 2.6 adds it and is in testing; WordPress.org keeps installing 2.5.0 until testing is done. Please use a staging or test site that is public and on HTTPS. Download the Development Version from the Advanced page of this plugin (or the pre-release on GitHub), upload it over the current version, open **Settings > AI CLI Connector**, copy the address from the "no key needed" box, add it as a custom connector in Claude or ChatGPT, and click Allow on the page your site opens. Report what worked and what did not in the GitHub issues (the GitHub page is the Plugin URI). Please report a security problem privately through "Report a vulnerability" on GitHub, never in a public issue.
+
 = How do I connect Claude or ChatGPT to WordPress? =
 
 Install and activate the plugin, then open **Settings > AI CLI Connector** (or click **Settings** under the plugin's name on the Plugins screen), and either copy the MCP address into claude.ai or ChatGPT as a custom connector, or make a key and copy the setup for your agent. An Application Password under **Users > Your Profile** works too where the host allows it. Claude Code, Cursor and VS Code connect to the plugin's built-in MCP server with the setup the screen gives you. Other agents call the REST routes under `/wp-json/seo-meta-bridge/v1/` directly. ChatGPT and other tools work wherever they can send an authenticated HTTPS request. Start with `GET /status`, which reports the active SEO plugin and the fields available.
@@ -280,13 +286,13 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
-= 2.6.1 =
+= 2.6.1 (in testing) =
 * One-click sign-in keeps working when an AI app refreshes several times at once after its hourly token expiry, or retries after a lost answer: within 30 seconds they all get the same answer.
 * Demoting an administrator ends their connected apps; reusing a sign-in code ends the connection it made; a failed save asks the app to try again instead of handing out tokens that never work.
 * The approval page says when the site already holds the most connected apps, and when the site needs HTTPS. Error pages answer with status 400.
 * Stricter localhost return addresses, connections survive a permalink change, old end markers are cleared after a month, and uninstall removes every sign-in leftover.
 
-= 2.6.0 =
+= 2.6.0 (in testing) =
 * **One-click sign-in for claude.ai, the Claude desktop app and ChatGPT.** Add the MCP address as a custom connector, click Allow on your site, done. No key to copy.
 * OAuth 2.1: authorization code with PKCE (S256), dynamic client registration, discovery documents, rotating refresh tokens. Only administrators approve, in their browser, and only Claude, ChatGPT, Cursor and apps on the same computer can ask. A password change ends that account's connections.
 * A connection works on the MCP server only. Settings > AI CLI Connector lists connected apps with a Disconnect button and can switch the feature off.
