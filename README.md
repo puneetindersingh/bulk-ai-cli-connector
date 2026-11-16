@@ -241,6 +241,7 @@ Change the ones you name and nothing else:
 
 - **Builders with nodes:** Elementor (classic and atomic widgets, heading level, link URLs), Beaver Builder, SiteOrigin Page Builder, the Accordions plugin, Advanced Custom Fields text fields. ACF repeaters and flexible content also take new rows (`op: add_row`, see `containers` in `GET /content`), and `kind=term` reaches a term's ACF fields.
 - **Pages that keep their text in post content** (Gutenberg, classic, Divi, WPBakery): send `"post_content": "..."` instead of `updates`.
+- **Divi Theme Builder layouts** (2.6.2+): the global header, footer and body layouts take the same calls by their layout id. They show on many pages, so only an account that may change the theme, edit others' posts, post unfiltered HTML and use the Divi Theme Builder gets in; `GET /content` marks them `site_wide: true`. A write or revert that would change the layout beyond the edit (the content filter stripping markup already in it, unless the site allows unfiltered HTML, or WordPress's own entity and tag fixes on save) is refused with nothing changed.
 - **Term descriptions:** add `"kind": "term", "taxonomy": "product_cat"` and send `"description"`.
 - `"dry_run": true` reports what would change and writes nothing. `base_hash` refuses the write if the page changed since you read it.
 - Every value is cleaned with `wp_kses_post`. Every write stores a backup first and returns its id as `backup_ts`.

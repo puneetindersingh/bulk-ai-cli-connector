@@ -195,6 +195,7 @@ add_action('rest_api_init', function () {
                 'supports_acf'      => bulkseme_acf_active(),
                 'supports_acf_rows' => bulkseme_acf_active(),
                 'supports_term_acf' => bulkseme_acf_active(),
+                'supports_divi_layouts' => true,
                 'supports_redirects' => true,
                 'supports_update'   => true,
                 'supports_mcp'      => true,

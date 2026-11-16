@@ -74,6 +74,85 @@ function bulkseme_content_builder_gate($builder, $post) {
     return new WP_Error('forbidden_builder', 'your account may not edit content built with ' . $builder . ' on this site', ['status' => 403]);
 }
 
+/**
+ * Divi Theme Builder layouts: the header, body and footer that a Theme Builder
+ * template shows. Divi registers these types without an edit screen or a REST
+ * route of their own (it edits them only inside the Theme Builder), so
+ * bulkseme_post_type_reachable() turns them away. They are let in here by name,
+ * and only while the type is registered, which Divi does when it runs.
+ */
+function bulkseme_divi_layout_types() {
+    return ['et_header_layout', 'et_body_layout', 'et_footer_layout'];
+}
+
+/** True for a post that is a registered Divi Theme Builder layout. */
+function bulkseme_is_divi_layout($post) {
+    return $post instanceof WP_Post
+        && in_array($post->post_type, bulkseme_divi_layout_types(), true)
+        && post_type_exists($post->post_type);
+}
+
+/**
+ * May the current user change Theme Builder layouts?
+ *
+ * A layout shows on every page its template covers, so edit_post alone is not
+ * enough. The caller also needs the right to change the site's appearance
+ * (edit_theme_options), to edit other people's posts, to post unfiltered HTML
+ * (unfiltered_html), and Divi's own Theme
+ * Builder permission (Divi > Role Editor). When Divi's role check is not
+ * loaded, only an account that may manage the site's settings gets in; when it
+ * fails, nobody does. Not filterable: a site cannot widen this by accident.
+ */
+function bulkseme_divi_layout_user_can() {
+    // unfiltered_html too: Divi renders some stored values (links, CSS, encoded
+    // text) that the content filter does not judge, and a layout is on every page.
+    if (!current_user_can('edit_theme_options') || !current_user_can('edit_others_posts') || !current_user_can('unfiltered_html')) {
+        return false;
+    }
+    if (function_exists('et_pb_is_allowed')) {
+        try {
+            $ok = et_pb_is_allowed('theme_builder');
+        } catch (Throwable $e) {
+            return false;
+        }
+        // Divi answers true or false; a stored setting string counts only when it is "on".
+        return is_string($ok) ? $ok === 'on' : $ok === true;
+    }
+    return current_user_can('manage_options');
+}
+
+/**
+ * Would WordPress's save filters (content_save_pre: entity fixes, tag balancing)
+ * leave this layout content exactly as sent? Changes made later in the save, by
+ * other plugins' filters, are reported afterwards with stored_differs.
+ */
+function bulkseme_divi_layout_saves_as_sent($post_id, $content) {
+    return wp_unslash(sanitize_post_field('post_content', wp_slash($content), (int) $post_id, 'db')) === $content;
+}
+
+/**
+ * After a Theme Builder layout changes, ask Divi to drop what it cached from it
+ * (the pages built with the layout and its generated CSS). Best effort, and
+ * skipped when Divi does not offer it: the change itself has already been made.
+ */
+function bulkseme_divi_layout_after_change($post_id) {
+    $post = get_post((int) $post_id);
+    if (!bulkseme_is_divi_layout($post)) {
+        return;
+    }
+    if (!function_exists('et_theme_builder_clear_wp_post_cache')) {
+        return;
+    }
+    try {
+        et_theme_builder_clear_wp_post_cache((int) $post->ID);
+    } catch (Throwable $e) {
+        // A cache that could not be cleared refreshes on its own later; the change stands.
+        unset($e);
+    }
+}
+add_action('bulkseme_content_updated', 'bulkseme_divi_layout_after_change', 10, 1);
+add_action('bulkseme_content_reverted', 'bulkseme_divi_layout_after_change', 10, 1);
+
 /** True when the Elementor plugin is loaded and its singletons are usable. */
 function bulkseme_elementor_active() {
     return class_exists('\Elementor\Plugin') && did_action('elementor/loaded');
@@ -86,6 +165,10 @@ function bulkseme_elementor_active() {
  */
 function bulkseme_detect_builder($post) {
     $id = $post->ID;
+    if (bulkseme_is_divi_layout($post)) {
+        // Divi Theme Builder layout (header, body or footer): Divi markup in post_content.
+        return ['builder' => 'divi', 'active' => defined('ET_BUILDER_VERSION') || defined('ET_CORE_VERSION'), 'editable' => true];
+    }
     if ($post->post_type === 'elementor_library') {
         // Elementor (Pro) template: headers/footers/popups/global widgets.
         // Edits here can render site-wide, which the GET response flags.
@@ -263,8 +346,14 @@ function bulkseme_content_touch($post_id) {
 function bulkseme_content_load_post($id, &$det = null) {
     $post = $id ? get_post($id) : null;
     // Only a post of a type with an edit screen or a REST route of its own is
-    // page content: see bulkseme_post_type_reachable().
-    if (!$post || $post->post_status === 'trash' || !bulkseme_post_type_reachable($post->post_type)) {
+    // page content: see bulkseme_post_type_reachable(). Divi Theme Builder
+    // layouts are the one exception, under a stricter rule of their own.
+    $layout = $post && bulkseme_is_divi_layout($post);
+    if (!$post || $post->post_status === 'trash' || (!$layout && !bulkseme_post_type_reachable($post->post_type))) {
+        return new WP_Error('post_not_found', 'post not found', ['status' => 404]);
+    }
+    // A layout answers "not found" to anyone below its bar, so its id is not given away.
+    if ($layout && !bulkseme_divi_layout_user_can()) {
         return new WP_Error('post_not_found', 'post not found', ['status' => 404]);
     }
     if (!current_user_can('edit_post', $post->ID)) {
@@ -295,6 +384,11 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
         'editable'       => $det['editable'],
         'backups'        => count(bulkseme_content_backup_ids($id)),
     ];
+    if (bulkseme_is_divi_layout($post)) {
+        // A change here shows on every page the layout's Theme Builder template covers.
+        $out['is_template'] = true;
+        $out['site_wide']   = true;
+    }
     if ($det['builder'] === 'elementor') {
         $raw = get_post_meta($id, '_elementor_data', true);
         if (!is_string($raw) || $raw === '') {
@@ -409,11 +503,23 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
 function bulkseme_content_write_post_content($post, $new_content, $dry_run, $unsafe_html) {
     $id    = $post->ID;
     $new_content = bulkseme_content_utf8($new_content);
+    $prev        = (string) $post->post_content;
+    $out         = ['id' => $id, 'dry_run' => (bool) $dry_run];
     $clean       = bulkseme_content_raw_html_allowed($unsafe_html)
         ? $new_content
         : wp_kses_post($new_content); // kses keeps HTML comments, so block markers and shortcodes survive
-    $prev = (string) $post->post_content;
-    $out  = ['id' => $id, 'dry_run' => (bool) $dry_run];
+    if (bulkseme_is_divi_layout($post)) {
+        // The content filter, or WordPress's own save filters (entity fixes, tag balancing), would
+        // change the layout beyond what was sent: strip markup already in it (a script in a code
+        // module), re-encode it, or restructure its blocks. A layout is on every page its template
+        // covers, so nothing is written; the dry run says so too.
+        if ($clean !== $new_content) {
+            return new WP_Error('layout_markup_would_be_stripped', 'the content filter would change this Theme Builder layout beyond the edit, often because of markup or characters already in it (a script, an ampersand in a link, a code module); nothing was written. Edit it in the Divi Theme Builder, or have the site allow unfiltered HTML for this request', ['status' => 409]);
+        }
+        if (!bulkseme_divi_layout_saves_as_sent($id, $clean)) {
+            return new WP_Error('layout_would_change_on_save', 'WordPress would change this Theme Builder layout on save (an entity or tag fix in it); nothing was written. Edit it in the Divi Theme Builder', ['status' => 409]);
+        }
+    }
     if ($clean === $prev) {
         $out['status']    = 'unchanged';
         $out['data_hash'] = md5($prev);
@@ -434,9 +540,16 @@ function bulkseme_content_write_post_content($post, $new_content, $dry_run, $uns
     if (is_wp_error($res)) {
         return new WP_Error('update_failed', $res->get_error_message(), ['status' => 500]);
     }
+    // WordPress filters content on save (entities, and more for some accounts): report what was stored.
+    clean_post_cache($id);
+    $stored           = (string) get_post_field('post_content', $id, 'raw');
     $out['status']    = 'ok';
     $out['backup_ts'] = $backup_ts;
-    $out['data_hash'] = md5($clean);
+    $out['data_hash'] = md5($stored);
+    if ($stored !== $clean) {
+        $out['stored_differs'] = true;
+        $out['note']           = 'WordPress adjusted the content on save, so it differs from what was sent';
+    }
     do_action('bulkseme_content_updated', $id, [['setting' => 'post_content', 'status' => 'ok']], get_current_user_id());
     return $out;
 }
@@ -579,6 +692,10 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
     $content = $req->get_param('post_content');
     if (!is_string($content)) {
         return new WP_Error('invalid_payload', 'post_content (string) is required for builder "' . $det['builder'] . '"', ['status' => 400]);
+    }
+    $base_hash = $req->get_param('base_hash');
+    if (is_string($base_hash) && $base_hash !== '' && !hash_equals(md5((string) $post->post_content), $base_hash)) {
+        return new WP_Error('hash_conflict', 'page content changed since it was read; re-GET /content and retry', ['status' => 409]);
     }
     $out = bulkseme_content_write_post_content($post, $content, $dry_run, (bool) $req->get_param('unsafe_html'));
     if (is_wp_error($out)) {
@@ -777,6 +894,9 @@ function bulkseme_rest_content_revert(WP_REST_Request $req) {
     if ($env['kind'] === 'siteorigin' || $env['kind'] === 'accordions' || $env['kind'] === 'beaver') {
         return bulkseme_rest_content_revert_meta_builder($post, $env, $ts);
     }
+    if (bulkseme_is_divi_layout($post) && !bulkseme_divi_layout_saves_as_sent($id, (string) $env['data'])) {
+        return new WP_Error('layout_would_change_on_save', 'WordPress would change this Theme Builder layout while restoring it (an entity or tag fix in the backup); nothing was restored. Restore it in the Divi Theme Builder', ['status' => 409]);
+    }
     $pre_ts = bulkseme_content_take_backup($id, 'post_content', (string) $post->post_content, 'pre-revert');
     if (!$pre_ts) {
         return new WP_Error('backup_failed', 'could not store a backup of the current content; nothing was restored', ['status' => 500]);
@@ -786,11 +906,19 @@ function bulkseme_rest_content_revert(WP_REST_Request $req) {
         return new WP_Error('update_failed', $res->get_error_message(), ['status' => 500]);
     }
     do_action('bulkseme_content_reverted', $id, $ts, get_current_user_id());
-    return [
+    // WordPress filters the content again for a caller without unfiltered_html, so report what was stored.
+    clean_post_cache($id);
+    $stored = (string) get_post_field('post_content', $id, 'raw');
+    $out    = [
         'id' => $id, 'status' => 'ok', 'reverted_to' => $ts,
         'pre_revert_backup_ts' => $pre_ts, 'kind' => 'post_content',
-        'data_hash' => md5($env['data']),
+        'data_hash' => md5($stored),
     ];
+    if ($stored !== (string) $env['data']) {
+        $out['stored_differs'] = true;
+        $out['note']           = 'WordPress filtered the restored content for this account, so it differs from the backup';
+    }
+    return $out;
 }
 
 // ---- Shared dispatch for the meta-stored builders ---------------------------------

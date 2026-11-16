@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.6.1
+Stable tag: 2.6.2
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -51,7 +51,7 @@ This plugin was called Bulk SEO Meta Editor for AI Agents up to version 1.9.1. S
 Version 2.0 goes past SEO fields. The same REST API can now read and change the visible text of a page, wherever the site keeps it:
 
 * **Page builders**: Elementor (including Elementor 4 atomic widgets), Beaver Builder, SiteOrigin Page Builder, and text fields in Advanced Custom Fields. These keep a page in post meta, where the core REST API cannot reach it. The plugin lists every piece of text as a node and changes only the ones you name. Layout, styling and widgets it does not know are written back exactly as they were read. In Advanced Custom Fields it can also add a row to a repeater or flexible content field (an FAQ item, a product tab), and edit the ACF fields of a category or any other taxonomy term.
-* **Gutenberg, classic editor, Divi and WPBakery**: read and replace the post content, or run a literal find and replace across it.
+* **Gutenberg, classic editor, Divi and WPBakery**: read and replace the post content, or run a literal find and replace across it. From v2.6.2 this covers Divi Theme Builder headers, footers and body layouts too, for accounts that may change the theme, edit others' posts, post unfiltered HTML and use the Theme Builder.
 * **Term descriptions**: category and product category introductions keep their headings, lists and tables.
 * **Undo for every edit**: each write stores the previous version first. `GET /content/backups` lists what can be restored and `POST /content/revert` puts it back. The newest ten are kept per page.
 * **Dry run and conflict check**: `dry_run` shows what would change and writes nothing. `base_hash` refuses a write when the page changed since it was read.
@@ -284,6 +284,13 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 
 == Changelog ==
 
+= 2.6.2 =
+* Divi Theme Builder layouts (the global header, footer and body templates) can now be read and edited through `/content`, `/content/replace`, `/content/backups` and `/content/revert`, with a backup before every write. Before, they answered "post not found".
+* A layout shows on many pages, so it takes more than edit rights: the account must be able to change the theme, edit other people's posts, post unfiltered HTML and use the Divi Theme Builder (Divi > Role Editor). Anyone else gets "post not found". `GET /content` marks a layout with `site_wide: true`, and Divi's cache for it is cleared after each change when Divi offers that.
+* A layout write or revert is refused, with nothing changed, when saving would change the layout beyond the edit: the content filter stripping or rewriting markup already in it (a script in a code module, an ampersand in a link) unless the site allows unfiltered HTML for the request, or WordPress's own save fixes (entities, tag balancing), which nothing turns off. Edit such a layout in the Divi Theme Builder.
+* `base_hash` is now checked on post content writes too, as documented. Post content writes and reverts report the hash of what WordPress actually stored, with `stored_differs: true` when it adjusted the content on save.
+* `/status` reports `supports_divi_layouts`.
+
 = 2.6.1 =
 * One-click sign-in keeps working when an AI app refreshes several times at once after its hourly token expiry, or retries after a lost answer: within 30 seconds they all get the same answer.
 * Demoting an administrator ends their connected apps; reusing a sign-in code ends the connection it made; a failed save asks the app to try again instead of handing out tokens that never work.
@@ -380,6 +387,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Earlier releases: Yoast and Rank Math field mapping, bulk and CSV routes, term and archive SEO, image alt text, custom schema, post titles and sitemap flushing. Full notes are in the GitHub repository's release history.
 
 == Upgrade Notice ==
+
+= 2.6.2 =
+Divi Theme Builder headers and footers can now be edited, only by accounts that may change the theme, edit others' posts, post unfiltered HTML and use the Theme Builder.
 
 = 2.6.1 =
 One-click sign-in no longer drops a connection when an AI app refreshes several times at once.

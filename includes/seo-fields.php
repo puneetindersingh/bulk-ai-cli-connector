@@ -1110,6 +1110,11 @@ function bulkseme_post_type_reachable($post_type) {
     if (!$type || $type->name === 'revision') {
         return false;
     }
+    // Divi Theme Builder layouts are never reachable by this general rule, whatever flags
+    // they are registered with; /content lets them in under its own stricter rule.
+    if (in_array($type->name, bulkseme_divi_layout_types(), true)) {
+        return false;
+    }
     return !empty($type->show_ui) || !empty($type->show_in_rest);
 }
 
