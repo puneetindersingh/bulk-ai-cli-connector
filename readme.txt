@@ -3,7 +3,7 @@ Contributors: puneetindersingh
 Tags: mcp, claude, chatgpt, elementor, yoast
 Requires at least: 5.7
 Tested up to: 7.1
-Stable tag: 2.6.2
+Stable tag: 2.7.0
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -75,7 +75,7 @@ Version 2.0 goes past SEO fields. The same REST API can now read and change the 
 * **Post titles** (v1.9.0+): send `post_title` in a `/bulk` item to rename a post; the slug is never touched
 * **Sitemap refresh** (v1.9.0+): `POST /sitemap/flush` clears the Yoast or Rank Math sitemap cache after REST edits
 * **Invalid Product schema guard** (v1.9.0+): drops `Product` nodes that carry no `offers`, `review` or `aggregateRating`, the ones Search Console reports as invalid on quote-only WooCommerce catalogues. Disable with `add_filter('bulkseme_drop_invalid_product_schema', '__return_false')`
-* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write. From v2.1.0: add rows to ACF repeaters and flexible content, and edit ACF fields on terms. From v2.2.0: Elementor dropdowns and switches, and adding a widget by copying an existing one
+* **Page content** (v2.0.0+): read and edit the text of Elementor, Beaver Builder, SiteOrigin, ACF, Gutenberg, classic, Divi and WPBakery pages and of term descriptions, with a backup before every write. From v2.1.0: add rows to ACF repeaters and flexible content, and edit ACF fields on terms. From v2.2.0: Elementor dropdowns and switches, and adding a widget by copying an existing one. From v2.7.0: Beaver Builder link URLs, heading tags and copies of a module or row, and PowerPack Lite modules
 * **Redirects, page copies and merchant listing fields** (v2.0.0+): see "New in 2.0" above
 * **API keys** (v2.0.0+): a second way to sign in, next to application passwords
 
@@ -230,7 +230,7 @@ Yes. The plugin does nothing until something calls the REST endpoints, and every
 
 = Can Claude or ChatGPT edit an Elementor or Beaver Builder page? =
 
-Yes, since 2.0.0. `GET /content?id=<page id>` returns the page's headings, paragraphs, button labels and list items as nodes, each with the element id and setting name it lives in. Send the ones you want changed to `POST /content` as `updates: [{"el": "...", "setting": "...", "value": "..."}]`. Only those values change. Add `"dry_run": true` to see the result without writing.
+Yes, since 2.0.0. `GET /content?id=<page id>` returns the page's headings, paragraphs, button labels and list items as nodes, each with the element id and setting name it lives in. Send the ones you want changed to `POST /content` as `updates: [{"el": "...", "setting": "...", "value": "..."}]`. Only those values change. Add `"dry_run": true` to see the result without writing. Link URLs and heading levels are listed as nodes too. To add a section, copy one that is already on the page with `inserts[]` and give the copy its own text in the same request (Elementor since 2.2.0, Beaver Builder since 2.7.0).
 
 = How do I undo an edit? =
 
@@ -283,6 +283,19 @@ The host's web-application firewall (Apache `mod_security`, Wordfence, Solid Sec
 No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are accepted, plus the plugin's own `schema` and `schema_mode` fields and, since 1.9.0, `post_title`. Other keys are rejected with `unknown_or_disallowed_key`.
 
 == Changelog ==
+
+= 2.7.0 =
+* Beaver Builder link URLs. `GET /content` now lists the link of a button, button group item, heading, callout, call to action, icon and photo (`kind: "url"`), and `updates[]` changes it. A value goes through `esc_url_raw`: relative paths, anchors, `mailto:` and `tel:` are kept; `javascript:`, `data:` and anything that reads as one once entities are decoded is refused. The link's target (`_self` or `_blank`) and nofollow (`yes` or `no`) switches are listed too (`kind: "choice"`).
+* Beaver Builder heading tags. The HTML tag of a heading module and the title tag of a callout or call to action are listed (`kind: "tag"`) and take only the tags the module offers (h1 to h6).
+* Beaver Builder copies. `inserts: [{ref, position, copy_from: {el}, set: [{el, setting, value}]}]` copies a module or a whole row of the same page and places it before or after another module or row, or first or last in a column. Every copied node gets a fresh id, the draft gets the same copy, and `set` changes the copy's text and links through the same checks as `updates[]` (if one fails, that copy is not placed). Saved global rows and modules are never copied and nothing is placed inside one. Unless raw HTML is allowed for the request, a copy that holds markup, a script URL or code outside the fields the plugin cleans is refused, as are HTML and widget modules. A text-only undo takes the copies out again; a full undo restores the layout exactly. `GET /content` lists every row, column and module under `outline` for `ref` and `copy_from`.
+* PowerPack Lite for Beaver Builder: the icon list's items, the info box's title, description, link and read more text, the heading's titles, tag and link, and the dual button's labels and links are now editable by name.
+* A Beaver Builder HTML module write that the content filter would strip (a `<style>` or `<script>`, for example) is now refused instead of saved without that markup.
+* `/status` reports `supports_beaver_links` and `supports_beaver_inserts`.
+* A page built with Elementor keeps its Elementor data after Elementor is switched off, while WordPress shows the post content instead. `/content` and `/content/replace` now read and edit that post content, the copy visitors actually see, with the usual dry run, `base_hash`, backup, stored read-back and undo. Before, they offered only the hidden Elementor copy and refused without `force=1`.
+* Such a page is reported by what the site shows (for example `builder: gutenberg`) with `elementor_leftover: true`. `GET /content` still lists the leftover Elementor nodes under `elementor`, and `force=1` with `updates[]`, `inserts[]` or on `/content/replace` still patches that data exactly as before. Elementor's excluded roles still apply to these pages.
+* On such a page a write that sends both `post_content` and `updates[]` or `inserts[]` is refused (400) rather than using one and ignoring the other. When the builder that owns the page (SiteOrigin, Beaver Builder, Accordions) is switched off too, the answer (`builders_inactive`) says that `force=1` there patches the leftover Elementor data.
+* Nothing changes while Elementor is active, or for Elementor templates.
+* `/status` reports `supports_elementor_leftover`.
 
 = 2.6.2 =
 * Divi Theme Builder layouts (the global header, footer and body templates) can now be read and edited through `/content`, `/content/replace`, `/content/backups` and `/content/revert`, with a backup before every write. Before, they answered "post not found".
@@ -387,6 +400,9 @@ No. Only meta keys belonging to the active SEO plugin (Yoast or Rank Math) are a
 * Earlier releases: Yoast and Rank Math field mapping, bulk and CSV routes, term and archive SEO, image alt text, custom schema, post titles and sitemap flushing. Full notes are in the GitHub repository's release history.
 
 == Upgrade Notice ==
+
+= 2.7.0 =
+Beaver Builder: change link URLs, heading tags and link targets, copy a module or a row with new text, and edit PowerPack Lite modules. Also edits pages left with Elementor data after Elementor was switched off.
 
 = 2.6.2 =
 Divi Theme Builder headers and footers can now be edited, only by accounts that may change the theme, edit others' posts, post unfiltered HTML and use the Theme Builder.

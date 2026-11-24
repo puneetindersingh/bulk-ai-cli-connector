@@ -1046,7 +1046,8 @@ function bulkseme_content_apply_inserts(array &$tree, array $inserts, $post_id, 
                 // Elementor's own document permission. The source must be an Elementor post.
                 $sdet = null;
                 $sp   = bulkseme_content_load_post($src_pid, $sdet);
-                if (!is_wp_error($sp) && (!is_array($sdet) || $sdet['builder'] !== 'elementor')) {
+                // A post whose Elementor data is left over while Elementor is off still counts: force=1 reaches it, as before.
+                if (!is_wp_error($sp) && (!is_array($sdet) || ($sdet['builder'] !== 'elementor' && !bulkseme_content_leftover_elementor($sdet)))) {
                     $sp = new WP_Error('source_not_elementor', 'copy_from post is not an Elementor post');
                 }
                 if (is_wp_error($sp)) {

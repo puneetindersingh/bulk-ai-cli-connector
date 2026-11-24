@@ -91,12 +91,12 @@ function bulkseme_mcp_tools() {
         ],
         'read_content' => [
             'route' => '/content', 'method' => 'GET', 'annotations' => $read + ['title' => 'Read page content'],
-            'description' => 'Read a page\'s text. Returns the builder that owns it (Elementor, Beaver Builder, SiteOrigin, ACF, block editor, classic and others), a data_hash, and the editable text as nodes with their "el" and "setting", or the post_content for pages that keep text there.',
+            'description' => 'Read a page\'s text. Returns the builder that owns it (Elementor, Beaver Builder, SiteOrigin, ACF, block editor, classic and others), a data_hash, and the editable text as nodes with their "el" and "setting", or the post_content for pages that keep text there. When a page still holds Elementor data but Elementor is switched off, the site shows the post content, so that is what comes back (elementor_leftover: true) and what edit_content and replace_text change.',
             'inputSchema' => ['type' => 'object', 'required' => ['id'], 'properties' => ['id' => $id, 'kind' => $kind, 'taxonomy' => $taxonomy]],
         ],
         'edit_content' => [
             'route' => '/content', 'method' => 'POST', 'annotations' => $write + ['title' => 'Edit page content'],
-            'description' => 'Change page text. Send {id, base_hash, updates:[{el, setting, value}]} with the nodes from read_content, or {id, base_hash, post_content} for pages that keep their text in post content, or {id, kind:"term", taxonomy, description} for a term. base_hash is the data_hash from read_content and stops the write if the page changed since. dry_run:true shows what would change. A backup is stored before every write; its id comes back as backup_ts.',
+            'description' => 'Change page text. Send {id, base_hash, updates:[{el, setting, value}]} with the nodes from read_content, or {id, base_hash, post_content} for pages that keep their text in post content, or {id, kind:"term", taxonomy, description} for a term. On Elementor and Beaver Builder pages, inserts:[{ref, position, copy_from:{el}}] copies an element already on the page next to ref (Beaver Builder also takes set:[{el, setting, value}] to give the copy its own text and links). base_hash is the data_hash from read_content and stops the write if the page changed since. dry_run:true shows what would change. A backup is stored before every write; its id comes back as backup_ts.',
             'inputSchema' => ['type' => 'object', 'required' => ['id'], 'properties' => [
                 'id' => $id, 'kind' => $kind, 'taxonomy' => $taxonomy,
                 'base_hash'    => ['type' => 'string'],

@@ -135,7 +135,8 @@ function bulkseme_rest_clone(WP_REST_Request $req) {
         return new WP_Error('needs_unfiltered_html', 'copying builder markup needs a user with unfiltered_html; without it WordPress would strip parts of the layout', ['status' => 403]);
     }
     // A copy carries the builder's own data, so the builder's rule for who may use it applies.
-    $gate = bulkseme_content_builder_gate(bulkseme_detect_builder($source)['builder'], $source);
+    $source_det = bulkseme_detect_builder($source);
+    $gate       = bulkseme_content_det_gate($source_det, $source);
     if (is_wp_error($gate)) {
         return $gate;
     }
@@ -208,8 +209,11 @@ function bulkseme_rest_clone(WP_REST_Request $req) {
         'meta_skipped' => $skipped,
         'meta_skipped_objects' => $skipped_objects,
         'terms'        => $terms,
-        'builder'      => bulkseme_detect_builder($source)['builder'],
+        'builder'      => $source_det['builder'],
     ];
+    if (bulkseme_content_leftover_elementor($source_det)) {
+        $summary['elementor_leftover'] = true;
+    }
     if ($req->get_param('dry_run')) {
         return array_merge(['dry_run' => true], $summary);
     }

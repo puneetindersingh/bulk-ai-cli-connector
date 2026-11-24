@@ -74,6 +74,58 @@ function bulkseme_content_builder_gate($builder, $post) {
     return new WP_Error('forbidden_builder', 'your account may not edit content built with ' . $builder . ' on this site', ['status' => 403]);
 }
 
+/** True when the detected builder carries leftover Elementor data (Elementor is off). */
+function bulkseme_content_leftover_elementor($det) {
+    return is_array($det) && !empty($det['elementor_leftover']);
+}
+
+/**
+ * The builder gate for a detected builder. A post with leftover Elementor data
+ * also keeps Elementor's own rule (its excluded roles), exactly as before
+ * Elementor was switched off, so nobody gets more access than they had.
+ */
+function bulkseme_content_det_gate($det, $post) {
+    if (bulkseme_content_leftover_elementor($det)) {
+        $gate = bulkseme_content_builder_gate('elementor', $post);
+        if (is_wp_error($gate)) {
+            return $gate;
+        }
+    }
+    return bulkseme_content_builder_gate($det['builder'], $post);
+}
+
+/**
+ * Builder details for the force=1 path on a post with leftover Elementor data:
+ * the write goes to the stored Elementor data, which the site does not show.
+ */
+function bulkseme_content_leftover_elementor_det() {
+    return ['builder' => 'elementor', 'active' => false, 'editable' => true];
+}
+
+/**
+ * A post with leftover Elementor data whose copy belongs to SiteOrigin, Beaver
+ * Builder or Accordions while that plugin is switched off as well. Without
+ * force the answer names what force=1 really does on such a post (patch the
+ * leftover Elementor data), instead of the other builder's own force hint.
+ * Returns WP_Error or null.
+ */
+function bulkseme_content_leftover_owner_off($det, $force) {
+    if ($force || !bulkseme_content_leftover_elementor($det) || !empty($det['active'])
+        || !in_array($det['builder'], ['siteorigin', 'accordions', 'beaver'], true)) {
+        return null;
+    }
+    return new WP_Error('builders_inactive', 'neither Elementor nor ' . $det['builder'] . ' is active on this site; force=1 here patches the leftover _elementor_data (not shown on the site). Switch ' . $det['builder'] . ' on to edit its content', ['status' => 409]);
+}
+
+/** Say in a response that leftover Elementor data was left alone. */
+function bulkseme_content_mark_leftover($out, $det) {
+    if (is_array($out) && bulkseme_content_leftover_elementor($det)) {
+        $out['elementor_leftover'] = true;
+        $out['elementor_note']     = 'Elementor is not active, so the site shows this post\'s content. That is what is read and edited here; the leftover Elementor data is left as it is (force=1 on a write edits that data instead).';
+    }
+    return $out;
+}
+
 /**
  * Divi Theme Builder layouts: the header, body and footer that a Theme Builder
  * template shows. Divi registers these types without an edit screen or a REST
@@ -162,6 +214,12 @@ function bulkseme_elementor_active() {
  * Identify which builder owns a post's content and whether we can edit it.
  * Most-specific signals first; `active` distinguishes a running builder from
  * orphaned meta left behind by a deactivated one.
+ *
+ * A post built with Elementor keeps its Elementor data after Elementor is
+ * switched off, but WordPress then shows the post content instead. Such a post
+ * is reported by what the site shows, with `elementor_leftover` set, so the
+ * content routes edit the copy visitors see. force=1 on a write still reaches
+ * the leftover Elementor data (see bulkseme_content_leftover_elementor()).
  */
 function bulkseme_detect_builder($post) {
     $id = $post->ID;
@@ -176,8 +234,19 @@ function bulkseme_detect_builder($post) {
     }
     $el_data = get_post_meta($id, '_elementor_data', true);
     if (get_post_meta($id, '_elementor_edit_mode', true) === 'builder' && is_string($el_data) && $el_data !== '') {
-        return ['builder' => 'elementor', 'active' => bulkseme_elementor_active(), 'editable' => true];
+        if (bulkseme_elementor_active()) {
+            return ['builder' => 'elementor', 'active' => true, 'editable' => true];
+        }
+        $det                       = bulkseme_detect_builder_below_elementor($post);
+        $det['elementor_leftover'] = true;
+        return $det;
     }
+    return bulkseme_detect_builder_below_elementor($post);
+}
+
+/** The detection steps after Elementor: what owns the post when Elementor does not. */
+function bulkseme_detect_builder_below_elementor($post) {
+    $id = $post->ID;
     if ($post->post_type === 'accordions') {
         // "Accordions" plugin: FAQ items live in accordions_options, never in post_content.
         return ['builder' => 'accordions', 'active' => bulkseme_accordions_active(), 'editable' => is_array(get_post_meta($id, 'accordions_options', true))];
@@ -360,7 +429,7 @@ function bulkseme_content_load_post($id, &$det = null) {
         return new WP_Error('forbidden', 'cannot edit this post', ['status' => 403]);
     }
     $det  = bulkseme_detect_builder($post);
-    $gate = bulkseme_content_builder_gate($det['builder'], $post);
+    $gate = bulkseme_content_det_gate($det, $post);
     if (is_wp_error($gate)) {
         return $gate;
     }
@@ -375,6 +444,31 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
     if (is_wp_error($post)) {
         return $post;
     }
+    $out = bulkseme_content_get_view($post, $det, $req);
+    if (is_wp_error($out) || !bulkseme_content_leftover_elementor($det)) {
+        return $out;
+    }
+    $out = bulkseme_content_mark_leftover($out, $det);
+    // The leftover data stays readable, as before, for anyone who patches it with force=1.
+    $raw  = get_post_meta($post->ID, '_elementor_data', true);
+    $raw  = is_string($raw) ? $raw : '';
+    $tree = json_decode($raw, true);
+    $el   = ['data_hash' => md5($raw)];
+    if (is_array($tree)) {
+        $el['introspection'] = 'static_fallback';
+        $el['nodes']         = bulkseme_elementor_flatten($tree);
+        if ($req->get_param('raw')) {
+            $el['raw'] = $tree;
+        }
+    } else {
+        $el['error'] = 'invalid_elementor_data';
+    }
+    $out['elementor'] = $el;
+    return $out;
+}
+
+/** GET /content for a post that passed the entry guards: the view of its detected builder. */
+function bulkseme_content_get_view($post, array $det, WP_REST_Request $req) {
     $id  = $post->ID;
     $out = [
         'id'             => $id,
@@ -456,6 +550,7 @@ function bulkseme_rest_content_get(WP_REST_Request $req) {
         $out['draft_matches']  = is_array($draft) ? bulkseme_bb_copy_matches($pub, $draft) : null;
         $out['global_nodes']   = $globals;
         $out['nodes']          = $nodes;
+        $out['outline']        = bulkseme_bb_outline($pub);
         if ($req->get_param('raw')) {
             $out['raw'] = json_decode(wp_json_encode($pub), true);
         }
@@ -595,6 +690,29 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
     $dry_run = (bool) $req->get_param('dry_run');
     $force   = (bool) $req->get_param('force');
 
+    $leftover = bulkseme_content_leftover_elementor($det);
+    if ($leftover) {
+        $has_updates = is_array($req->get_param('updates')) && $req->get_param('updates');
+        $has_inserts = is_array($req->get_param('inserts')) && $req->get_param('inserts');
+        if (is_string($req->get_param('post_content')) && ($has_updates || $has_inserts)) {
+            // Two copies live on this post; never write one and quietly drop the other request.
+            return new WP_Error('invalid_payload', 'this post holds leftover Elementor data: send post_content, or updates[]/inserts[] with force=1 for the Elementor data, not both', ['status' => 400]);
+        }
+        $off = bulkseme_content_leftover_owner_off($det, $force);
+        if (is_wp_error($off)) {
+            return $off;
+        }
+        $meta_owner = in_array($det['builder'], ['siteorigin', 'accordions', 'beaver', 'acf'], true);
+        $acf_nodes  = $has_updates && !$has_inserts && bulkseme_acf_active();
+        if (($has_updates || $has_inserts) && $force) {
+            // As before Elementor was switched off: patch the stored Elementor data.
+            $det = bulkseme_content_leftover_elementor_det();
+        } elseif (($has_updates || $has_inserts) && !$meta_owner && !$acf_nodes) {
+            // Node edits with nothing on the page to apply them to: say how to reach either copy.
+            return new WP_Error('elementor_inactive', 'Elementor is not active on this site, so it shows this post\'s content: send post_content to edit it, or pass force=1 to patch the leftover _elementor_data (not shown on the site)', ['status' => 409]);
+        }
+    }
+
     if ($det['builder'] === 'elementor') {
         $updates = $req->get_param('updates');
         $inserts = $req->get_param('inserts');
@@ -675,7 +793,7 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
     }
 
     if ($det['builder'] === 'siteorigin' || $det['builder'] === 'accordions' || $det['builder'] === 'beaver' || $det['builder'] === 'acf') {
-        return bulkseme_rest_content_post_meta_builder($post, $det, $req);
+        return bulkseme_content_mark_leftover(bulkseme_rest_content_post_meta_builder($post, $det, $req), $det);
     }
     if (!$det['editable']) {
         return new WP_Error('unsupported_builder', 'content for builder "' . $det['builder'] . '" is stored in a format this version cannot safely edit', ['status' => 501]);
@@ -687,7 +805,7 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
         if (is_wp_error($gate)) {
             return $gate;
         }
-        return bulkseme_rest_content_post_meta_builder($post, ['builder' => 'acf', 'active' => true, 'editable' => true], $req);
+        return bulkseme_content_mark_leftover(bulkseme_rest_content_post_meta_builder($post, ['builder' => 'acf', 'active' => true, 'editable' => true], $req), $det);
     }
     $content = $req->get_param('post_content');
     if (!is_string($content)) {
@@ -705,7 +823,7 @@ function bulkseme_rest_content_post(WP_REST_Request $req) {
     if (!$dry_run && $det['builder'] === 'wpbakery' && $req->get_param('rebuild_wpb_css')) {
         $out['wpb_css_bytes'] = bulkseme_wpb_rebuild_custom_css($id);
     }
-    return $out;
+    return bulkseme_content_mark_leftover($out, $det);
 }
 
 function bulkseme_rest_content_replace(WP_REST_Request $req) {
@@ -733,6 +851,14 @@ function bulkseme_rest_content_replace(WP_REST_Request $req) {
     $case    = $req->get_param('case_sensitive');
     $case    = ($case === null) ? true : (bool) $case;
 
+    $off = bulkseme_content_leftover_owner_off($det, $force);
+    if (is_wp_error($off)) {
+        return $off;
+    }
+    if ($force && bulkseme_content_leftover_elementor($det)) {
+        // As before Elementor was switched off: find and replace in the stored Elementor data.
+        $det = bulkseme_content_leftover_elementor_det();
+    }
     if ($det['builder'] === 'elementor') {
         if (!$det['active'] && !$force) {
             return new WP_Error('elementor_inactive', 'Elementor is not active on this site; pass force=1 to patch _elementor_data anyway', ['status' => 409]);
@@ -795,7 +921,7 @@ function bulkseme_rest_content_replace(WP_REST_Request $req) {
     }
 
     if ($det['builder'] === 'siteorigin' || $det['builder'] === 'accordions' || $det['builder'] === 'beaver' || $det['builder'] === 'acf') {
-        return bulkseme_rest_content_replace_meta_builder($post, $det, $find, $replace, $case, $dry_run, $force);
+        return bulkseme_content_mark_leftover(bulkseme_rest_content_replace_meta_builder($post, $det, $find, $replace, $case, $dry_run, $force), $det);
     }
     if (!$det['editable']) {
         return new WP_Error('unsupported_builder', 'content for builder "' . $det['builder'] . '" is stored in a format this version cannot safely edit', ['status' => 501]);
@@ -806,7 +932,7 @@ function bulkseme_rest_content_replace(WP_REST_Request $req) {
         ? str_replace($find, $replace, $old, $count)
         : str_ireplace($find, $replace, $old, $count);
     if ($count === 0 || $new === $old) {
-        return ['id' => $id, 'builder' => $det['builder'], 'dry_run' => $dry_run, 'occurrences' => 0, 'status' => 'unchanged', 'data_hash' => md5($old)];
+        return bulkseme_content_mark_leftover(['id' => $id, 'builder' => $det['builder'], 'dry_run' => $dry_run, 'occurrences' => 0, 'status' => 'unchanged', 'data_hash' => md5($old)], $det);
     }
     $out = bulkseme_content_write_post_content($post, $new, $dry_run, false);
     if (is_wp_error($out)) {
@@ -814,7 +940,7 @@ function bulkseme_rest_content_replace(WP_REST_Request $req) {
     }
     $out['builder']     = $det['builder'];
     $out['occurrences'] = $count;
-    return $out;
+    return bulkseme_content_mark_leftover($out, $det);
 }
 
 function bulkseme_rest_content_backups(WP_REST_Request $req) {
@@ -996,14 +1122,26 @@ function bulkseme_rest_content_post_meta_builder($post, array $det, WP_REST_Requ
     $force   = (bool) $req->get_param('force');
     $unsafe  = (bool) $req->get_param('unsafe_html');
     $updates = $req->get_param('updates');
-    if (!is_array($updates) || !$updates) {
-        return new WP_Error('invalid_payload', $builder . ' posts are edited via a non-empty updates[] array (post_content is derived output)', ['status' => 400]);
+    $inserts = $req->get_param('inserts');
+    $updates = is_array($updates) ? $updates : [];
+    $inserts = is_array($inserts) ? $inserts : [];
+    if ($inserts && $builder !== 'beaver') {
+        return new WP_Error('invalid_payload', 'inserts[] works on Elementor and Beaver Builder pages; ' . $builder . ' posts are edited via updates[]', ['status' => 400]);
+    }
+    if (!$updates && !$inserts) {
+        return new WP_Error('invalid_payload', $builder . ' posts are edited via a non-empty updates[] array' . ($builder === 'beaver' ? ' and/or inserts[]' : '') . ' (post_content is derived output)', ['status' => 400]);
     }
     if (count($updates) > 100) {
         return new WP_Error('too_many', 'max 100 updates per request', ['status' => 400]);
     }
+    if (count($inserts) > 20) {
+        return new WP_Error('too_many', 'max 20 inserts per request', ['status' => 400]);
+    }
     if (!$det['active'] && !$force) {
         return new WP_Error('builder_inactive', $builder . ' is not active on this site; pass force=1 to patch the stored data anyway', ['status' => 409]);
+    }
+    if ($builder === 'beaver') {
+        return bulkseme_bb_post($post, $updates, $inserts, $unsafe, $dry_run, (bool) $req->get_param('atomic'), $req->get_param('base_hash'));
     }
     $data = bulkseme_mb_load($builder, $id);
     if (is_wp_error($data)) {
@@ -1036,6 +1174,9 @@ function bulkseme_rest_content_replace_meta_builder($post, array $det, $find, $r
         $old = (string) $node['text'];
         if ($old === '' || (isset($node['editable']) && !$node['editable'])) {
             continue;
+        }
+        if (isset($node['kind']) && $node['kind'] !== 'url') {
+            continue; // heading tags and link target/nofollow are never find/replace targets; link URLs are
         }
         $count = 0;
         $new   = $case ? str_replace($find, $replace, $old, $count) : str_ireplace($find, $replace, $old, $count);
@@ -1153,14 +1294,47 @@ function bulkseme_content_restore_text_only($post, array $env, $ts) {
         }
         $prev    = bulkseme_mb_encode($kind, $current);
         $updates = [];
+        $held    = [];
+        // As on Elementor pages: only nodes whose value differs from the page now are replayed, so values
+        // the cleaning would change (an administrator's embed, a link with a shortcode) stay as they are.
+        $now = [];
+        foreach (bulkseme_mb_nodes($kind, $current) as $cur) {
+            $now[$cur['el'] . '|' . $cur['setting']] = (string) $cur['text'];
+        }
         foreach (bulkseme_mb_nodes($kind, $backup) as $node) {
             if (isset($node['editable']) && !$node['editable']) {
                 continue;
             }
+            $nk = $node['el'] . '|' . $node['setting'];
+            if (isset($now[$nk]) && $now[$nk] === (string) $node['text']) {
+                continue;
+            }
+            if ($kind === 'beaver' && isset($node['kind']) && $node['kind'] === 'url' && bulkseme_bb_sanitize_url($node['text']) !== (string) $node['text']) {
+                // A stored link the URL check would rewrite (a shortcode, braces) is not restored half-way.
+                $held[] = ['el' => $node['el'], 'setting' => $node['setting'], 'status' => 'skipped', 'errors' => ['link_not_restorable_without_unfiltered_html']];
+                continue;
+            }
             $updates[] = ['el' => $node['el'], 'setting' => $node['setting'], 'value' => (string) $node['text']];
         }
-        list($results, $changed) = bulkseme_mb_apply($kind, $current, $updates, false);
-        $out = bulkseme_mb_commit($kind, $id, $prev, $current, $results, $changed, false, 'pre-revert');
+        list($results, $changed) = $updates ? bulkseme_mb_apply($kind, $current, $updates, false) : [[], 0];
+        $results = array_merge($results, $held);
+        if ($kind === 'beaver') {
+            // Copies the backed-up request placed (listed in its note) come out again, as on Elementor pages,
+            // for a role Beaver Builder lets remove modules and rows (Unrestricted Editing).
+            $note = isset($env['note']) ? (string) $env['note'] : '';
+            if (!bulkseme_beaver_user_has_access('unrestricted_editing')) {
+                $note = '';
+                if (strpos((string) $env['note'], ' inserts:') !== false) {
+                    $results[] = ['el' => '', 'setting' => '', 'status' => 'skipped', 'errors' => ['copies_kept_role_lacks_unrestricted_editing']];
+                }
+            }
+            list($rm_results, $removed) = bulkseme_bb_remove_inserted($current, $backup, $note);
+            $results  = array_merge($results, $rm_results);
+            $changed += count($removed);
+            $out      = bulkseme_bb_commit($id, $prev, $current, $results, $changed, false, 'pre-revert', ['removed' => $removed, 'revert_bytes' => strlen(bulkseme_bb_encode($backup))]);
+        } else {
+            $out = bulkseme_mb_commit($kind, $id, $prev, $current, $results, $changed, false, 'pre-revert');
+        }
     }
     if (is_wp_error($out)) {
         return $out;
@@ -1178,7 +1352,7 @@ function bulkseme_content_restore_text_only($post, array $env, $ts) {
         'reverted_to'          => $ts,
         'kind'                 => $kind,
         'mode'                 => 'text_only',
-        'note'                 => 'Your account does not hold unfiltered_html, so only the text was restored. Layout, raw HTML, custom CSS and everything else on the page was left as it is now.',
+        'note'                 => 'Only the text was restored (your account does not hold unfiltered_html, or on a Beaver Builder page your role may not add or remove rows and modules). Copy, and where listed as nodes also link URLs, heading levels and link targets, went back to the backup; on Elementor and Beaver Builder pages, copies placed by that request were taken out where your role may remove them. Raw HTML, custom CSS, styling and everything else on the page was left as it is now.',
         'pre_revert_backup_ts' => isset($out['backup_ts']) ? $out['backup_ts'] : 0,
         'restored'             => (int) $changed,
         'skipped'              => $skipped,
